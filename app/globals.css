@@ -2,7 +2,7 @@
 
 @font-face {
   font-family: "Cairo";
-  src: url("/fonts/cairo-arabic.woff2") format("woff2");
+  src: url("../public/fonts/cairo-arabic.woff2") format("woff2");
   font-weight: 400 900;
   font-style: normal;
   font-display: swap;
@@ -13,7 +13,7 @@
 
 @font-face {
   font-family: "Cairo";
-  src: url("/fonts/cairo-latin.woff2") format("woff2");
+  src: url("../public/fonts/cairo-latin.woff2") format("woff2");
   font-weight: 400 900;
   font-style: normal;
   font-display: swap;

@@ -109,7 +109,7 @@ export default function CurrenciesPage() {
 
       <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-5">
         {/* conversion form */}
-        <Card glow="teal" className="p-4 lg:col-span-2">
+        <Card glow="teal" className="p-4 lg:col-span-2" data-tour="fx-form">
           <SectionTitle icon="swap" title="شراء / بيع" sub="تحويل فوري بين العملات" />
           <div className="mb-1.5 text-[11px] font-semibold text-muted">أدفع</div>
           <CurrencySelect value={from} onChange={(c) => { setFrom(c); if (c === to) setTo(c === "USD" ? "SAR" : "USD"); }} />

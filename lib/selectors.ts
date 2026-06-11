@@ -87,6 +87,27 @@ export function netWorth(s: GameState): number {
   );
 }
 
+/** remaining UCN owed across all active loans */
+export function outstandingDebt(s: GameState): number {
+  let debt = 0;
+  for (const l of s.loans) {
+    if (l.status !== "active") continue;
+    debt += Math.max(0, l.totalDue - l.paidInstallments * l.installment);
+  }
+  return debt;
+}
+
+/** asset side only (loans are not netted out of netWorth) */
+export function totalAssets(s: GameState): number {
+  return netWorth(s);
+}
+
+/** can the player's whole estate not cover the debt? */
+export function insolvent(s: GameState): boolean {
+  const debt = outstandingDebt(s);
+  return debt > 0 && totalAssets(s) < debt;
+}
+
 /** 0..100 from recent crypto momentum */
 export function fearGreed(s: GameState): number {
   const btc = s.prices[pk.cx("BTC")]?.changePct ?? 0;

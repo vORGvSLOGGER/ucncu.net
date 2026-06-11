@@ -1,0 +1,105 @@
+"use client";
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import { getSupabase, isAuthConfigured } from "./supabaseClient";
+
+export type AuthStatus = "disabled" | "loading" | "guest" | "authed";
+
+interface AuthCtxValue {
+  status: AuthStatus;
+  email: string | null;
+  sendOtp: (email: string) => Promise<{ error: string | null }>;
+  verifyOtp: (email: string, code: string) => Promise<{ error: string | null }>;
+  signOut: () => Promise<void>;
+  /** seam for the server-authoritative real mode (next milestone) */
+  getAccessToken: () => Promise<string | null>;
+}
+
+const AuthCtx = createContext<AuthCtxValue>({
+  status: "disabled",
+  email: null,
+  sendOtp: async () => ({ error: "غير مفعّل" }),
+  verifyOtp: async () => ({ error: "غير مفعّل" }),
+  signOut: async () => {},
+  getAccessToken: async () => null,
+});
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [status, setStatus] = useState<AuthStatus>("loading");
+  const [email, setEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAuthConfigured()) {
+      setStatus("disabled");
+      return;
+    }
+    const supabase = getSupabase()!;
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session?.user?.email) {
+        setEmail(data.session.user.email);
+        setStatus("authed");
+      } else {
+        setStatus("guest");
+      }
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.email) {
+        setEmail(session.user.email);
+        setStatus("authed");
+      } else {
+        setEmail(null);
+        setStatus("guest");
+      }
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  const sendOtp = useCallback(async (addr: string) => {
+    const supabase = getSupabase();
+    if (!supabase) return { error: "تسجيل الدخول غير مفعّل بعد" };
+    const { error } = await supabase.auth.signInWithOtp({
+      email: addr,
+      options: { shouldCreateUser: true },
+    });
+    return { error: error ? error.message : null };
+  }, []);
+
+  const verifyOtp = useCallback(async (addr: string, code: string) => {
+    const supabase = getSupabase();
+    if (!supabase) return { error: "تسجيل الدخول غير مفعّل بعد" };
+    const { error } = await supabase.auth.verifyOtp({
+      email: addr,
+      token: code,
+      type: "email",
+    });
+    return { error: error ? error.message : null };
+  }, []);
+
+  const signOut = useCallback(async () => {
+    await getSupabase()?.auth.signOut();
+  }, []);
+
+  const getAccessToken = useCallback(async () => {
+    const supabase = getSupabase();
+    if (!supabase) return null;
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  }, []);
+
+  return (
+    <AuthCtx.Provider value={{ status, email, sendOtp, verifyOtp, signOut, getAccessToken }}>
+      {children}
+    </AuthCtx.Provider>
+  );
+}
+
+export function useAuth(): AuthCtxValue {
+  return useContext(AuthCtx);
+}

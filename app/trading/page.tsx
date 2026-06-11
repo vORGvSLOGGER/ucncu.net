@@ -104,25 +104,29 @@ export default function TradingPage() {
               onChange={setChartMode}
             />
           </div>
-          {chartMode === "candle" ? (
-            <CandleChart candles={entry.candles} height={260} />
-          ) : (
-            <LineChart data={entry.spark} height={260} color="var(--color-teal)" />
-          )}
+          <div data-tour="trade-chart">
+            {chartMode === "candle" ? (
+              <CandleChart candles={entry.candles} height={260} />
+            ) : (
+              <LineChart data={entry.spark} height={260} color="var(--color-teal)" />
+            )}
+          </div>
         </Card>
 
         {/* order panel */}
         <Card glow="teal" className="p-4">
           <SectionTitle icon="bolt" title="أوامر التداول" sub="افتح صفقة على السعر الحي" />
-          <TabSwitcher
-            tabs={[
-              { id: "long" as const, label: "شراء (صعود)" },
-              { id: "short" as const, label: "بيع (هبوط)" },
-            ]}
-            active={side}
-            onChange={setSide}
-            accent="updown"
-          />
+          <div data-tour="trade-side">
+            <TabSwitcher
+              tabs={[
+                { id: "long" as const, label: "شراء (صعود)" },
+                { id: "short" as const, label: "بيع (هبوط)" },
+              ]}
+              active={side}
+              onChange={setSide}
+              accent="updown"
+            />
+          </div>
           <div className="mt-3 mb-1.5 text-[11px] font-semibold text-muted">الكمية (وحدات)</div>
           <AmountInput value={qtyStr} onChange={setQtyStr} max={maxQty} suffix="وحدة" />
           <div className="mt-3 space-y-1.5 rounded-xl border border-edge bg-card2 p-3 text-[11px]">

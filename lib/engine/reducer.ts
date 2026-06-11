@@ -1,14 +1,37 @@
 import {
   CATCHUP_MAX_TICKS,
+  DAILY_POST_XP_LIMIT,
   DIVIDEND_PERIOD_MS,
   FX_SPREAD,
+  IHSAN_DONOR_MIN_LEVEL,
+  IHSAN_RESCUER_MIN_LEVEL,
   NET_WORTH_CAP,
+  OFFERS_CAP,
+  POST_MAX_LEN,
   RENT_PERIOD_MS,
   TICK_MS,
   TRADE_FEE,
+  UPDATE_VERSION,
 } from "../constants";
-import { fmtDec, fmtInt, uid } from "../format";
-import { BORROWER_OFFERS, botById, LOAN_PRODUCTS, SECTORS } from "../seed";
+import { fmtDec, fmtInt, saudiDayKey, uid } from "../format";
+import { sanitizeNavOrder } from "../nav";
+import {
+  canDonate,
+  canRescue,
+  dailyBonus,
+  feeDiscount,
+  fxSpreadDiscount,
+  loanCapMult,
+  maxCompanies,
+  maxLoans,
+} from "../perks";
+import {
+  BORROWER_OFFERS,
+  botById,
+  LOAN_PRODUCTS,
+  SECTORS,
+  spawnPlayerAuction,
+} from "../seed";
 import {
   cryptoUcn,
   fxRate,
@@ -20,10 +43,15 @@ import {
   symbolPrice,
   unrealizedPnl,
 } from "../selectors";
+import { TUTORIAL_STEPS } from "../tutorial/steps";
 import type { Action, GameState } from "../types";
 import { processAccruals } from "./accrual";
 import { tickAuctions } from "./auction";
+import { tickBankruptcy } from "./bankruptcy";
+import { retuneBots, tickBots } from "./bots";
+import { addFeedPost, tickFeed } from "./feed";
 import { addNotif, addToast, addTx } from "./log";
+import { ensureThread, pushChat, returnOfferItems, tickSocial } from "./social";
 import { awardXp, checkAchievements } from "./xp";
 import { tickPrices } from "./prices";
 
@@ -39,9 +67,12 @@ export function gameReducer(state: GameState, action: Action): GameState {
   switch (action.type) {
     case "HYDRATE": {
       const h = structuredClone(action.state);
+      retuneBots(h);
       const elapsed = action.now - h.lastTickAt;
       if (elapsed > TICK_MS) {
-        tickPrices(h, Math.min(CATCHUP_MAX_TICKS, Math.floor(elapsed / TICK_MS)));
+        const ticks = Math.min(CATCHUP_MAX_TICKS, Math.floor(elapsed / TICK_MS));
+        tickPrices(h, ticks);
+        tickBots(h, action.now, ticks, true);
         const summary = processAccruals(h, action.now, true);
         const gained = summary.rent + summary.dividends + summary.lendsReturned;
         if (elapsed > 2 * 60_000 && gained > 0) {
@@ -53,6 +84,8 @@ export function gameReducer(state: GameState, action: Action): GameState {
             action.now
           );
         }
+        tickBankruptcy(h, action.now, ticks);
+        tickSocial(h, action.now, true);
         tickAuctions(h, action.now);
       }
       h.toasts = [];
@@ -65,10 +98,33 @@ export function gameReducer(state: GameState, action: Action): GameState {
 
     case "TICK": {
       tickPrices(s);
+      tickBots(s, action.now);
       tickAuctions(s, action.now);
       processAccruals(s, action.now);
+      tickBankruptcy(s, action.now);
+      tickSocial(s, action.now);
+      tickFeed(s, action.now);
+      // Saudi-day rollover: reset daily counters + grant the daily bonus perk
+      const dayKey = saudiDayKey(action.now);
+      if (dayKey !== s.lastDailyKey) {
+        s.lastDailyKey = dayKey;
+        s.dailyPostCount = 0;
+        const bonus = dailyBonus(s.player.level);
+        if (bonus > 0) {
+          s.balances.UCN += bonus;
+          addTx(s, "daily-bonus", "المكافأة اليومية", bonus, "UCN", action.now);
+          addNotif(
+            s,
+            "مكافأتك اليومية 🎁",
+            `+${fmtInt(bonus)} UCN مع بداية اليوم بتوقيت السعودية`,
+            "gold",
+            action.now
+          );
+        }
+      }
       s.netWorthHistory.push(netWorth(s));
       if (s.netWorthHistory.length > NET_WORTH_CAP) s.netWorthHistory.shift();
+      s.tickCount += 1;
       s.lastTickAt = action.now;
       return s;
     }
@@ -89,7 +145,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
         s.inventory.push({ defId: action.defId, qty: action.qty, avgCost: cost / action.qty });
       }
       addTx(s, "buy", `شراء ${def.name} ×${action.qty}`, -cost, "UCN", now);
-      addToast(s, `🛒 اشتريت ${def.name} ×${action.qty} مقابل ${fmtInt(cost)} UCN`, "success");
       awardXp(s, 8);
       checkAchievements(s);
       return s;
@@ -103,9 +158,9 @@ export function gameReducer(state: GameState, action: Action): GameState {
       const proceeds = itemPrice(s, action.defId) * action.qty;
       s.balances.UCN += proceeds;
       inv.qty -= action.qty;
+      if (inv.auctionQty) inv.auctionQty = Math.min(inv.auctionQty, inv.qty);
       if (inv.qty === 0) s.inventory = s.inventory.filter((i) => i.defId !== action.defId);
       addTx(s, "sell", `بيع ${def.name} ×${action.qty}`, proceeds, "UCN", now);
-      addToast(s, `💰 بعت ${def.name} ×${action.qty} مقابل ${fmtInt(proceeds)} UCN`, "success");
       awardXp(s, 8);
       checkAchievements(s);
       return s;
@@ -116,6 +171,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
     case "PLACE_BID": {
       const a = s.auctions.find((x) => x.id === action.auctionId);
       if (!a || a.endsAt <= now) return fail(s, "انتهى هذا المزاد");
+      if (a.sellerId === "player") return fail(s, "لا يمكنك المزايدة على مزادك الخاص");
       const minBid = Math.ceil(a.currentBid * 1.01);
       if (action.amount < minBid)
         return fail(s, `الحد الأدنى للمزايدة ${fmtInt(minBid)} UCN`);
@@ -129,7 +185,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
       a.bids.unshift({ bidder: s.player.name, amount: a.currentBid, t: now, isPlayer: true });
       if (a.bids.length > 30) a.bids.length = 30;
       addTx(s, "auction-bid", `مزايدة على ${item?.name ?? "أصل"}`, -a.currentBid, "UCN", now);
-      addToast(s, `🔨 أنت المتصدر الآن بمبلغ ${fmtInt(a.currentBid)} UCN`, "gold");
       awardXp(s, 5);
       return s;
     }
@@ -140,7 +195,7 @@ export function gameReducer(state: GameState, action: Action): GameState {
       const price = symbolPrice(s, action.symbol);
       if (!price || action.qty <= 0) return s;
       const margin = price * action.qty;
-      const fee = margin * TRADE_FEE;
+      const fee = margin * TRADE_FEE * (1 - feeDiscount(s.player.level));
       if (s.balances.UCN < margin + fee)
         return fail(s, "رصيد UCN غير كافٍ لفتح الصفقة");
       s.balances.UCN -= margin + fee;
@@ -160,7 +215,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
         "UCN",
         now
       );
-      addToast(s, `📈 فُتحت الصفقة عند ${fmtDec(price)}`, "info");
       awardXp(s, 10);
       checkAchievements(s);
       return s;
@@ -185,13 +239,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
       });
       if (s.closedTrades.length > 30) s.closedTrades.length = 30;
       addTx(s, "trade-close", `إغلاق صفقة ${pos.symbol}`, pnl, "UCN", now);
-      addToast(
-        s,
-        pnl >= 0
-          ? `✅ أُغلقت الصفقة بربح +${fmtInt(pnl)} UCN`
-          : `❌ أُغلقت الصفقة بخسارة −${fmtInt(Math.abs(pnl))} UCN`,
-        pnl >= 0 ? "success" : "warning"
-      );
       awardXp(s, 10);
       checkAchievements(s);
       return s;
@@ -203,7 +250,8 @@ export function gameReducer(state: GameState, action: Action): GameState {
       if (action.from === action.to || action.amount <= 0) return s;
       if (s.balances[action.from] < action.amount)
         return fail(s, `رصيد ${action.from} غير كافٍ`);
-      const rate = fxRate(s, action.from, action.to) * (1 - FX_SPREAD);
+      const spread = FX_SPREAD * (1 - fxSpreadDiscount(s.player.level));
+      const rate = fxRate(s, action.from, action.to) * (1 - spread);
       const received = action.amount * rate;
       s.balances[action.from] -= action.amount;
       s.balances[action.to] += received;
@@ -214,11 +262,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
         received,
         action.to,
         now
-      );
-      addToast(
-        s,
-        `💱 حوّلت ${fmtDec(action.amount)} ${action.from} إلى ${fmtDec(received)} ${action.to}`,
-        "success"
       );
       awardXp(s, 5);
       return s;
@@ -231,14 +274,13 @@ export function gameReducer(state: GameState, action: Action): GameState {
       if (!price || action.spendUcn <= 0) return s;
       if (s.balances.UCN < action.spendUcn)
         return fail(s, "رصيد UCN غير كافٍ لشراء العملة الرقمية");
-      const fee = action.spendUcn * TRADE_FEE;
+      const fee = action.spendUcn * TRADE_FEE * (1 - feeDiscount(s.player.level));
       const qty = (action.spendUcn - fee) / price;
       s.balances.UCN -= action.spendUcn;
       const h = s.cryptoHoldings[action.code];
       h.avgCost = h.qty + qty > 0 ? (h.avgCost * h.qty + action.spendUcn) / (h.qty + qty) : 0;
       h.qty += qty;
       addTx(s, "crypto-buy", `شراء ${action.code}`, -action.spendUcn, "UCN", now);
-      addToast(s, `🪙 اشتريت ${qty.toFixed(6)} ${action.code}`, "success");
       awardXp(s, 8);
       checkAchievements(s);
       return s;
@@ -249,7 +291,8 @@ export function gameReducer(state: GameState, action: Action): GameState {
       if (!h || h.qty < action.qty || action.qty <= 0)
         return fail(s, `لا تملك كمية كافية من ${action.code}`);
       const price = cryptoUcn(s, action.code);
-      const proceeds = action.qty * price * (1 - TRADE_FEE);
+      const proceeds =
+        action.qty * price * (1 - TRADE_FEE * (1 - feeDiscount(s.player.level)));
       h.qty -= action.qty;
       if (h.qty <= 1e-9) {
         h.qty = 0;
@@ -257,7 +300,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
       }
       s.balances.UCN += proceeds;
       addTx(s, "crypto-sell", `بيع ${action.code}`, proceeds, "UCN", now);
-      addToast(s, `💰 بعت ${action.qty.toFixed(6)} ${action.code} مقابل ${fmtInt(proceeds)} UCN`, "success");
       awardXp(s, 8);
       return s;
     }
@@ -281,7 +323,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
         nextRentAt: now + RENT_PERIOD_MS,
       });
       addTx(s, "property-buy", `شراء ${def.name}`, -price, "UCN", now);
-      addToast(s, `🏠 مبروك! اشتريت ${def.name}`, "gold");
       awardXp(s, 30);
       checkAchievements(s);
       return s;
@@ -295,7 +336,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
       s.balances.UCN += value;
       s.properties = s.properties.filter((p) => p.id !== action.id);
       addTx(s, "property-sell", `بيع ${def?.name ?? "عقار"}`, value, "UCN", now);
-      addToast(s, `💰 بعت ${def?.name ?? "العقار"} مقابل ${fmtInt(value)} UCN`, "success");
       awardXp(s, 15);
       return s;
     }
@@ -305,12 +345,14 @@ export function gameReducer(state: GameState, action: Action): GameState {
     case "TAKE_LOAN": {
       const product = LOAN_PRODUCTS.find((p) => p.id === action.productId);
       if (!product || action.amount <= 0) return s;
-      if (action.amount > product.maxAmount)
-        return fail(s, `الحد الأقصى لهذا القرض ${fmtInt(product.maxAmount)} UCN`);
+      const cap = Math.round(product.maxAmount * loanCapMult(s.player.level));
+      if (action.amount > cap)
+        return fail(s, `الحد الأقصى لهذا القرض ${fmtInt(cap)} UCN`);
       if (s.player.creditScore < product.minCredit)
         return fail(s, `هذا القرض يتطلب تقييمًا ائتمانيًا ${product.minCredit}+`);
-      if (s.loans.filter((l) => l.status === "active").length >= 3)
-        return fail(s, "لا يمكن امتلاك أكثر من 3 قروض نشطة");
+      const slots = maxLoans(s.player.level);
+      if (s.loans.filter((l) => l.status === "active").length >= slots)
+        return fail(s, `لا يمكن امتلاك أكثر من ${slots} قروض نشطة`);
       const totalDue = Math.round(action.amount * (1 + product.ratePct / 100));
       s.balances.UCN += action.amount;
       s.loans.unshift({
@@ -327,7 +369,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
         takenAt: now,
       });
       addTx(s, "loan", `${product.name} — إيداع`, action.amount, "UCN", now);
-      addToast(s, `🏦 حصلت على ${product.name}: +${fmtInt(action.amount)} UCN`, "gold");
       addNotif(
         s,
         "تم صرف القرض 🏦",
@@ -355,7 +396,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
       });
       const bot = botById(offer.botId);
       addTx(s, "lend", `إقراض ${bot.name}`, -offer.amount, "UCN", now);
-      addToast(s, `🤝 أقرضت ${bot.name} مبلغ ${fmtInt(offer.amount)} UCN`, "info");
       awardXp(s, 10);
       return s;
     }
@@ -368,7 +408,9 @@ export function gameReducer(state: GameState, action: Action): GameState {
       if (s.balances.UCN < action.capital)
         return fail(s, "رصيد UCN غير كافٍ لتأسيس الشركة");
       if (!SECTORS.some((x) => x.id === action.sectorId)) return s;
-      if (s.companies.length >= 5) return fail(s, "الحد الأقصى 5 شركات");
+      const coSlots = maxCompanies(s.player.level);
+      if (s.companies.length >= coSlots)
+        return fail(s, `الحد الأقصى ${coSlots} شركات في مستواك الحالي`);
       const name = action.name.trim() || "شركتي الجديدة";
       const partnerPct = action.partnerBotId
         ? Math.min(49, Math.max(5, action.partnerPct ?? 30))
@@ -414,10 +456,11 @@ export function gameReducer(state: GameState, action: Action): GameState {
         dividendsPaid: 0,
         events: [{ t: now, kind: "founded", text: `تأسست الشركة برأس مال ${fmtInt(totalCapital)} UCN` }],
         nextDividendAt: now + DIVIDEND_PERIOD_MS,
+        level: 1,
       });
       addTx(s, "company", `تأسيس شركة ${name}`, -action.capital, "UCN", now);
-      addToast(s, `🚀 تأسست شركة ${name} بنجاح!`, "gold");
       addNotif(s, "شركة جديدة 🚀", `${name} انطلقت بتقييم ${fmtInt(valuation)} UCN`, "gold", now);
+      addFeedPost(s, "player", "milestone", `أسس ${s.player.name} شركة ${name} في قطاع ${SECTORS.find((x) => x.id === action.sectorId)?.name ?? ""} 🚀`, now);
       awardXp(s, 100);
       checkAchievements(s);
       return s;
@@ -437,7 +480,6 @@ export function gameReducer(state: GameState, action: Action): GameState {
       else co.partners.push({ name: "مستثمرون خارجيون", pct, invested: proceeds });
       co.events.unshift({ t: now, kind: "shares", text: `بيع حصة ${pct}% مقابل ${fmtInt(proceeds)} UCN` });
       addTx(s, "shares-sale", `بيع ${pct}% من ${co.name}`, proceeds, "UCN", now);
-      addToast(s, `💼 بعت ${pct}% من ${co.name} مقابل ${fmtInt(proceeds)} UCN`, "success");
       if (co.ownershipPct < 1) {
         s.companies = s.companies.filter((c) => c.id !== co.id);
         addNotif(s, "خروج كامل", `تخارجت بالكامل من شركة ${co.name}`, "info", now);
@@ -476,6 +518,311 @@ export function gameReducer(state: GameState, action: Action): GameState {
 
     case "DISMISS_TOAST": {
       s.toasts = s.toasts.filter((t) => t.id !== action.id);
+      return s;
+    }
+
+    /* ================= tutorial ================= */
+
+    case "TUTORIAL_START": {
+      if (s.tutorial.status === "done" || s.tutorial.status === "skipped")
+        s.tutorial.step = 0;
+      s.tutorial.status = "active";
+      return s;
+    }
+
+    case "TUTORIAL_NEXT": {
+      if (s.tutorial.status !== "active") return s;
+      const idx = s.tutorial.step;
+      const step = TUTORIAL_STEPS[idx];
+      if (step && idx > s.tutorial.rewarded) {
+        awardXp(s, step.xp);
+        s.tutorial.rewarded = idx;
+      }
+      if (idx + 1 >= TUTORIAL_STEPS.length) {
+        s.tutorial.status = "done";
+        s.tutorial.step = TUTORIAL_STEPS.length - 1;
+        addNotif(s, "أكملت الجولة التعليمية 🎓", "أصبحت جاهزًا لعالم المال — بالتوفيق!", "gold", now);
+      } else {
+        s.tutorial.step = idx + 1;
+      }
+      return s;
+    }
+
+    case "TUTORIAL_PREV": {
+      s.tutorial.step = Math.max(0, s.tutorial.step - 1);
+      return s;
+    }
+
+    case "TUTORIAL_SKIP": {
+      s.tutorial.status = "skipped";
+      return s;
+    }
+
+    /* ================= explore feed ================= */
+
+    case "ADD_POST": {
+      const text = action.text.trim().slice(0, POST_MAX_LEN);
+      if (!text) return s;
+      addFeedPost(s, "player", "user", text, now);
+      if (s.dailyPostCount < DAILY_POST_XP_LIMIT) {
+        s.dailyPostCount += 1;
+        awardXp(s, 3);
+      }
+      return s;
+    }
+
+    case "LIKE_POST": {
+      const post = s.feed.find((p) => p.id === action.postId);
+      if (!post) return s;
+      if (post.likedByPlayer) {
+        post.likedByPlayer = false;
+        post.likes = Math.max(0, post.likes - 1);
+      } else {
+        post.likedByPlayer = true;
+        post.likes += 1;
+      }
+      return s;
+    }
+
+    /* ================= إحسان ================= */
+
+    case "DONATE_IHSAN": {
+      const c = s.ihsanCases.find((x) => x.id === action.caseId);
+      if (!c || c.status !== "open" || c.subjectId === "player") return s;
+      if (!canDonate(s.player.level))
+        return fail(s, `التبرع يتطلب المستوى ${IHSAN_DONOR_MIN_LEVEL} فأعلى`);
+      const amount = Math.min(Math.round(action.amount), c.debt - c.donated);
+      if (amount <= 0) return s;
+      if (s.balances.UCN < amount) return fail(s, "رصيد UCN غير كافٍ للتبرع");
+      s.balances.UCN -= amount;
+      c.donated += amount;
+      c.donations.unshift({ donorId: "player", amount, t: now });
+      const subjectName = botById(c.subjectId).name;
+      addTx(s, "donation-out", `تبرع لـ ${subjectName}`, -amount, "UCN", now);
+      addNotif(s, "جزاك الله خيرًا 🤲", `تبرعت بـ ${fmtInt(amount)} UCN لإنقاذ ${subjectName}`, "gold", now);
+      addFeedPost(s, c.subjectId, "ihsan", `شكرًا من القلب لـ ${s.player.name} على تبرعه الكريم 🤲 — المعروف لا يُنسى`, now);
+      awardXp(s, 25);
+      return s;
+    }
+
+    case "RESCUE_IHSAN": {
+      const c = s.ihsanCases.find((x) => x.id === action.caseId);
+      if (!c || c.status !== "open" || c.subjectId === "player") return s;
+      if (!canRescue(s.player.level))
+        return fail(s, `الفزعة الكاملة تتطلب المستوى ${IHSAN_RESCUER_MIN_LEVEL} فأعلى`);
+      const remaining = c.debt - c.donated;
+      if (remaining <= 0) return s;
+      if (s.balances.UCN < remaining) return fail(s, `الفزعة تحتاج ${fmtInt(remaining)} UCN`);
+      s.balances.UCN -= remaining;
+      c.donated = c.debt;
+      c.donations.unshift({ donorId: "player", amount: remaining, t: now });
+      c.status = "rescued";
+      c.rescuedBy = s.player.name;
+      const subject = s.bots[c.subjectId];
+      if (subject) {
+        subject.bankrupt = false;
+        subject.netWorth += Math.round(c.debt * 0.5);
+      }
+      const subjectName = botById(c.subjectId).name;
+      addTx(s, "donation-out", `فزعة لإنقاذ ${subjectName}`, -remaining, "UCN", now);
+      addToast(s, `🦅 فزعتك أنقذت ${subjectName} من الإفلاس!`, "gold");
+      addNotif(s, "فزعة الكبار 🦅", `سددت ${fmtInt(remaining)} UCN وأنقذت ${subjectName} — وسام لا يُشترى`, "gold", now);
+      addFeedPost(s, c.subjectId, "ihsan", `🦅 ${s.player.name} فزع لي وسدد ديني كاملًا — رجال المواقف قليل، شكرًا!`, now);
+      awardXp(s, 150);
+      return s;
+    }
+
+    case "PAY_DEBT": {
+      const l = s.loans.find((x) => x.id === action.loanId);
+      if (!l || l.status !== "active") return s;
+      if (s.balances.UCN < l.installment)
+        return fail(s, `سداد القسط يحتاج ${fmtInt(l.installment)} UCN`);
+      s.balances.UCN -= l.installment;
+      l.paidInstallments += 1;
+      l.missed = Math.max(0, l.missed - 1);
+      s.player.creditScore = Math.min(990, s.player.creditScore + 6);
+      addTx(s, "debt-payment", `سداد مبكر — ${l.productName}`, -l.installment, "UCN", now);
+      if (l.paidInstallments >= l.installments) {
+        l.status = "paid";
+        addNotif(s, "تم سداد القرض بالكامل ✅", `${l.productName} — سجل ائتماني ممتاز`, "success", now);
+      }
+      awardXp(s, 10);
+      return s;
+    }
+
+    /* ================= navigation ================= */
+
+    case "SET_NAV_ORDER": {
+      s.settings.navOrder = sanitizeNavOrder(action.order);
+      return s;
+    }
+
+    /* ================= friends + chat ================= */
+
+    case "ADD_FRIEND": {
+      if (s.friends.includes(action.botId)) return s;
+      const bot = botById(action.botId);
+      s.friends.push(action.botId);
+      const thread = ensureThread(s, action.botId);
+      thread.pendingReplyAt = now + 2000 + Math.random() * 5000;
+      addNotif(s, `أصبحت صديقًا لـ ${bot.name} 🤝`, "يمكنكما الآن التراسل وعقد الصفقات والشراكات", "success", now);
+      awardXp(s, 5);
+      return s;
+    }
+
+    case "REMOVE_FRIEND": {
+      s.friends = s.friends.filter((id) => id !== action.botId);
+      return s;
+    }
+
+    case "SEND_CHAT": {
+      if (!s.friends.includes(action.botId)) return s;
+      const text = action.text.trim().slice(0, POST_MAX_LEN);
+      if (!text) return s;
+      pushChat(s, action.botId, "player", text, now);
+      const thread = ensureThread(s, action.botId);
+      thread.pendingReplyAt = now + 3000 + Math.random() * 7000;
+      return s;
+    }
+
+    case "MARK_CHAT_READ": {
+      const thread = s.chats[action.botId];
+      if (thread) thread.unread = 0;
+      return s;
+    }
+
+    /* ================= direct sales ================= */
+
+    case "OFFER_SALE": {
+      if (!s.friends.includes(action.botId)) return fail(s, "أضفه صديقًا أولًا لعرض البيع عليه");
+      if (s.saleOffers.filter((o) => o.status === "pending").length >= 5)
+        return fail(s, "لديك 5 عروض معلقة — انتظر ردودها أولًا");
+      const inv = s.inventory.find((i) => i.defId === action.itemDefId);
+      const qty = Math.floor(action.qty);
+      if (!inv || qty < 1 || inv.qty < qty) return fail(s, "لا تملك هذه الكمية");
+      if (action.price < 1) return fail(s, "حدد سعرًا صالحًا");
+      // escrow the items until the bot decides
+      const avgCost = inv.avgCost;
+      inv.qty -= qty;
+      if (inv.auctionQty) inv.auctionQty = Math.min(inv.auctionQty, inv.qty);
+      if (inv.qty === 0) s.inventory = s.inventory.filter((i) => i.defId !== action.itemDefId);
+      s.saleOffers.unshift({
+        id: uid("offer"),
+        toBotId: action.botId,
+        itemDefId: action.itemDefId,
+        qty,
+        price: Math.round(action.price),
+        status: "pending",
+        decideAt: now + 5000 + Math.random() * 15000,
+        t: now,
+        avgCost,
+      });
+      if (s.saleOffers.length > OFFERS_CAP) s.saleOffers.length = OFFERS_CAP;
+      return s;
+    }
+
+    case "ACCEPT_COUNTER": {
+      const offer = s.saleOffers.find((o) => o.id === action.offerId);
+      if (!offer || offer.status !== "countered" || !offer.counterPrice) return s;
+      offer.status = "accepted";
+      s.balances.UCN += offer.counterPrice;
+      const def = marketItemDef(offer.itemDefId);
+      const bot = botById(offer.toBotId);
+      addTx(s, "direct-sale", `بيع مباشر لـ ${bot.name} — ${def?.name ?? "عنصر"}`, offer.counterPrice, "UCN", now);
+      addNotif(s, "تمت الصفقة المباشرة ✅", `${bot.name} اشترى ${def?.name ?? "العنصر"} بـ ${fmtInt(offer.counterPrice)} UCN بعد المساومة`, "success", now);
+      addFeedPost(s, offer.toBotId, "trade", `أتممت صفقة مباشرة مع ${s.player.name}: ${def?.name ?? "عنصر"} مقابل ${fmtInt(offer.counterPrice)} UCN 🤝`, now);
+      awardXp(s, 15);
+      return s;
+    }
+
+    case "CANCEL_OFFER": {
+      const offer = s.saleOffers.find((o) => o.id === action.offerId);
+      if (!offer || (offer.status !== "pending" && offer.status !== "countered")) return s;
+      returnOfferItems(s, offer.itemDefId, offer.qty, offer.avgCost);
+      s.saleOffers = s.saleOffers.filter((o) => o.id !== action.offerId);
+      return s;
+    }
+
+    /* ================= partnerships ================= */
+
+    case "INVITE_PARTNER": {
+      if (!s.friends.includes(action.botId)) return fail(s, "أضفه صديقًا أولًا لدعوته للشراكة");
+      const co = s.companies.find((c) => c.id === action.companyId);
+      if (!co) return s;
+      const bot = botById(action.botId);
+      if (co.partners.some((p) => p.name === bot.name))
+        return fail(s, `${bot.name} شريك في ${co.name} بالفعل`);
+      if (
+        s.partnerships.some(
+          (p) => p.companyId === co.id && p.botId === action.botId && p.status === "pending"
+        )
+      )
+        return fail(s, "دعوة الشراكة قيد الدراسة بالفعل");
+      const capital = Math.round(co.valuation * (0.2 + Math.random() * 0.15));
+      s.partnerships.unshift({
+        id: uid("ptn"),
+        companyId: co.id,
+        botId: action.botId,
+        botPct: 0,
+        capital,
+        status: "pending",
+        decideAt: now + 8000 + Math.random() * 15000,
+        t: now,
+      });
+      addNotif(s, `دعوة شراكة أُرسلت 📨`, `${bot.name} يدرس ضخ ${fmtInt(capital)} UCN في ${co.name} — سيرد خلال لحظات`, "info", now);
+      return s;
+    }
+
+    /* ================= auction re-listing ================= */
+
+    case "RELIST_AUCTION": {
+      const inv = s.inventory.find((i) => i.defId === action.itemDefId);
+      const def = marketItemDef(action.itemDefId);
+      if (!inv || !def) return s;
+      if (!inv.auctionQty || inv.auctionQty < 1)
+        return fail(s, "إعادة العرض متاحة فقط لمقتنيات المزاد");
+      if (s.auctions.filter((a) => a.sellerId === "player").length >= 2)
+        return fail(s, "يمكنك عرض مزادين خاصين كحد أقصى في آن واحد");
+      const startBid = Math.max(100, Math.round(action.startBid));
+      inv.qty -= 1;
+      inv.auctionQty -= 1;
+      if (inv.qty === 0) s.inventory = s.inventory.filter((i) => i.defId !== action.itemDefId);
+      s.auctions.push(spawnPlayerAuction(now, action.itemDefId, startBid));
+      addNotif(s, "مزادك انطلق 🔨", `${def.name} معروض الآن بسعر افتتاح ${fmtInt(startBid)} UCN — عمولة المنصة 5% عند البيع`, "info", now);
+      awardXp(s, 10);
+      return s;
+    }
+
+    /* ================= company upgrade ================= */
+
+    case "UPGRADE_COMPANY": {
+      const co = s.companies.find((c) => c.id === action.companyId);
+      if (!co) return s;
+      if (co.level >= 3) return fail(s, "شركتك في أعلى مستوى بالفعل");
+      const cost = Math.round(co.valuation * (co.level === 1 ? 0.3 : 0.5));
+      if (s.balances.UCN < cost) return fail(s, `الترقية تحتاج ${fmtInt(cost)} UCN`);
+      s.balances.UCN -= cost;
+      co.level += 1;
+      co.valuation = Math.round((co.valuation + cost) * 1.05);
+      const label = co.level === 2 ? "نامية" : "رائدة";
+      co.events.unshift({ t: now, kind: "upgrade", text: `ترقية الشركة إلى «${label}» — التوزيعات ارتفعت` });
+      if (co.events.length > 20) co.events.length = 20;
+      addTx(s, "upgrade", `ترقية ${co.name} إلى «${label}»`, -cost, "UCN", now);
+      addNotif(s, `شركة ${label} 🏆`, `${co.name} ارتقت — توزيعات أرباح أعلى وتقييم ${fmtInt(co.valuation)} UCN`, "gold", now);
+      awardXp(s, 40);
+      return s;
+    }
+
+    /* ================= community feedback ================= */
+
+    case "SUBMIT_FEEDBACK": {
+      const stars = Math.min(5, Math.max(1, Math.round(action.stars)));
+      const fresh = !s.feedback[UPDATE_VERSION];
+      s.feedback[UPDATE_VERSION] = { stars, text: action.text.trim().slice(0, 500), t: now };
+      if (fresh) {
+        addNotif(s, "شكرًا لتقييمك 💛", "صوت المجتمع هو ما يطوّر UCNCU — رأيك وصل", "gold", now);
+        awardXp(s, 20);
+      }
       return s;
     }
 

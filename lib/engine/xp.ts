@@ -1,8 +1,10 @@
 import { rankForLevel } from "../constants";
 import { fmtInt } from "../format";
+import { PERKS } from "../perks";
 import { ACHIEVEMENTS } from "../seed";
 import { netWorth } from "../selectors";
 import type { GameState } from "../types";
+import { addFeedPost } from "./feed";
 import { addNotif, addToast } from "./log";
 
 /** XP needed to advance FROM `level` to `level + 1` */
@@ -12,13 +14,12 @@ export function xpForLevel(level: number): number {
 
 export function awardXp(s: GameState, amount: number): void {
   s.player.xp += amount;
-  let leveled = false;
+  const before = s.player.level;
   while (s.player.xp >= xpForLevel(s.player.level)) {
     s.player.xp -= xpForLevel(s.player.level);
     s.player.level += 1;
-    leveled = true;
   }
-  if (leveled) {
+  if (s.player.level > before) {
     addToast(s, `🎉 ارتفع مستواك إلى ${s.player.level} — ${rankForLevel(s.player.level)}`, "gold");
     addNotif(
       s,
@@ -26,6 +27,21 @@ export function awardXp(s: GameState, amount: number): void {
       `رتبتك الآن: ${rankForLevel(s.player.level)}`,
       "gold"
     );
+    // announce each newly unlocked perk
+    for (const perk of PERKS) {
+      if (perk.level > before && perk.level <= s.player.level) {
+        addNotif(s, `ميزة جديدة 🎁 ${perk.name}`, perk.desc, "gold");
+      }
+    }
+    // milestone feed post every 5 levels (avoid spam)
+    if (Math.floor(s.player.level / 5) > Math.floor(before / 5)) {
+      addFeedPost(
+        s,
+        "player",
+        "milestone",
+        `وصل ${s.player.name} إلى المستوى ${s.player.level} — ${rankForLevel(s.player.level)} 🎖️`
+      );
+    }
   }
 }
 

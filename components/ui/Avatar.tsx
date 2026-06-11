@@ -18,24 +18,32 @@ export function Avatar({
   avatarId = 0,
   size = 40,
   ring = false,
+  ringColor,
 }: {
   name: string;
   avatarId?: number;
   size?: number;
   ring?: boolean;
+  /** perk frame color — overrides the default gold ring */
+  ringColor?: string | null;
 }) {
   const [c1, c2] = PALETTES[Math.abs(avatarId) % PALETTES.length];
   const letter = name.trim().charAt(0) || "؟";
+  const ringStyle =
+    ring && ringColor
+      ? { boxShadow: `0 0 0 2px ${ringColor}, 0 0 14px ${ringColor}66` }
+      : undefined;
   return (
     <div
       className={`relative grid shrink-0 place-items-center rounded-full font-bold text-bg ${
-        ring ? "ring-2 ring-gold/70 shadow-[0_0_14px_rgba(245,196,81,0.35)]" : ""
+        ring && !ringColor ? "ring-2 ring-gold/70 shadow-[0_0_14px_rgba(245,196,81,0.35)]" : ""
       }`}
       style={{
         width: size,
         height: size,
         background: `linear-gradient(135deg, ${c1}, ${c2})`,
         fontSize: size * 0.42,
+        ...ringStyle,
       }}
     >
       {letter}

@@ -5,12 +5,57 @@ import { Card, SectionTitle } from "@/components/ui/Card";
 import { AmountInput } from "@/components/ui/AmountInput";
 import { CountdownTimer } from "@/components/ui/CountdownTimer";
 import { Icon } from "@/components/ui/Icon";
+import { Modal } from "@/components/ui/Modal";
 import { PageTitle } from "@/components/ui/PageTitle";
-import { RARITY_META } from "@/lib/constants";
+import { AUCTION_TIERS, RARITY_META } from "@/lib/constants";
 import { fmtInt, timeAgo } from "@/lib/format";
-import { marketItemDef } from "@/lib/selectors";
+import { itemPrice, marketItemDef } from "@/lib/selectors";
 import { useGame, useGameDispatch } from "@/lib/state/GameContext";
 import type { Auction } from "@/lib/types";
+
+function TierBadge({ auction }: { auction: Auction }) {
+  const tier = AUCTION_TIERS[auction.tier ?? "rare"];
+  return (
+    <span
+      className="rounded-full border px-2 py-0.5 text-[10px] font-bold"
+      style={{ color: tier.color, borderColor: `${tier.color}66`, background: `${tier.color}14` }}
+    >
+      {tier.label} ✦
+    </span>
+  );
+}
+
+function RelistModal({ defId, onClose }: { defId: string; onClose: () => void }) {
+  const game = useGame();
+  const dispatch = useGameDispatch();
+  const def = marketItemDef(defId);
+  const fair = itemPrice(game, defId);
+  const [startStr, setStartStr] = useState(String(Math.round(fair * 0.6)));
+  const start = Math.floor(parseFloat(startStr) || 0);
+
+  return (
+    <Modal open onClose={onClose} title={`إعادة عرض ${def?.name ?? ""} بالمزاد 🔨`}>
+      <p className="text-[11px] leading-5 text-muted">
+        حدد سعر الافتتاح — السعر المنخفض يجذب مزايدين أكثر. القيمة السوقية الحالية ≈{" "}
+        <b className="text-teal">{fmtInt(fair)} UCN</b>. عمولة المنصة 5% من سعر البيع
+        النهائي، وإن لم يزايد أحد يعود العنصر لمخزونك.
+      </p>
+      <div className="mt-3">
+        <AmountInput value={startStr} onChange={setStartStr} suffix="UCN" showPctButtons={false} />
+      </div>
+      <button
+        disabled={start < 100}
+        onClick={() => {
+          dispatch({ type: "RELIST_AUCTION", itemDefId: defId, startBid: start });
+          onClose();
+        }}
+        className="btn-gold mt-4 w-full py-2.5 text-sm"
+      >
+        اعرضه للمزاد — افتتاح {fmtInt(start)} UCN
+      </button>
+    </Modal>
+  );
+}
 
 function BidPanel({ auction }: { auction: Auction }) {
   const game = useGame();
@@ -66,18 +111,60 @@ function BidPanel({ auction }: { auction: Auction }) {
 
 export default function AuctionPage() {
   const game = useGame();
-  const [featured, ...others] = game.auctions;
+  const [relistId, setRelistId] = useState<string | null>(null);
+  const systemAuctions = game.auctions.filter((a) => a.sellerId !== "player");
+  const myAuctions = game.auctions.filter((a) => a.sellerId === "player");
+  const [featured, ...others] = systemAuctions;
   const featuredItem = featured ? marketItemDef(featured.itemDefId) : null;
+  const relistable = game.inventory.filter((i) => (i.auctionQty ?? 0) >= 1);
 
   return (
     <div>
       <PageTitle
         icon="gavel"
         title="المزاد"
-        sub="نافس اللاعبين على أصول نادرة وفرص خاصة — أعلى مزايدة تفوز"
+        sub="قطع نادرة وأسطورية وخارقة يطرحها الذكاء — وما تفوز به يمكنك إعادة عرضه للربح"
       />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      {/* my live listings */}
+      {myAuctions.length > 0 && (
+        <div className="mb-4">
+          <SectionTitle icon="tag" title="مزاداتي المعروضة" sub="عمولة 5% عند البيع — وإن لم يزايد أحد يعود العنصر إليك" />
+          <div className="grid gap-3 sm:grid-cols-2">
+            {myAuctions.map((a) => {
+              const item = marketItemDef(a.itemDefId);
+              if (!item) return null;
+              return (
+                <Card key={a.id} glow="teal" className="p-3.5">
+                  <div className="flex items-center gap-3">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-teal/40 bg-teal/10 text-teal">
+                      <Icon name={item.icon} size={20} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 text-xs font-bold text-ink">
+                        {item.name}
+                        <TierBadge auction={a} />
+                      </div>
+                      <div className="text-[10px] text-muted">
+                        {a.bids.length === 0
+                          ? "بانتظار أول مزايدة…"
+                          : `${a.bids.length} مزايدة · المتصدر ${a.leader}`}
+                      </div>
+                    </div>
+                    <CountdownTimer endsAt={a.endsAt} />
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-sm">
+                    <span className="text-muted text-[10px]">المزايدة الحالية</span>
+                    <b className="text-gold">{fmtInt(a.currentBid)} UCN</b>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3" data-tour="auction-list">
         {/* featured auction */}
         {featured && featuredItem && (
           <Card glow="gold" className="p-4 lg:col-span-2">
@@ -89,6 +176,7 @@ export default function AuctionPage() {
                 <div>
                   <div className="flex items-center gap-2">
                     <h2 className="text-lg font-extrabold text-ink">{featuredItem.name}</h2>
+                    <TierBadge auction={featured} />
                     <span
                       className="rounded-full border px-2 py-0.5 text-[10px] font-bold"
                       style={{
@@ -169,7 +257,10 @@ export default function AuctionPage() {
                         <Icon name={item.icon} size={20} />
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className="text-xs font-bold text-ink">{item.name}</div>
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-ink">
+                          {item.name}
+                          <TierBadge auction={a} />
+                        </div>
                         <div className="text-[10px] text-muted">
                           المتصدر: {a.leaderIsPlayer ? "أنت 👑" : a.leader}
                         </div>
@@ -187,6 +278,44 @@ export default function AuctionPage() {
               })}
             </div>
           </div>
+
+          {/* relistable winnings */}
+          {relistable.length > 0 && (
+            <div>
+              <SectionTitle
+                icon="refresh"
+                title="مقتنياتي من المزاد"
+                sub="اعرضها في مزاد جديد واربح من الفارق"
+              />
+              <div className="space-y-2">
+                {relistable.map((inv) => {
+                  const def = marketItemDef(inv.defId);
+                  if (!def) return null;
+                  return (
+                    <Card key={inv.defId} className="flex items-center gap-3 p-3">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-gold/40 bg-gold/10 text-gold">
+                        <Icon name={def.icon} size={17} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] font-bold text-ink">
+                          {def.name} <span className="text-muted">×{inv.auctionQty}</span>
+                        </div>
+                        <div className="text-[9px] text-muted">
+                          القيمة الآن {fmtInt(itemPrice(game, inv.defId))} UCN
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setRelistId(inv.defId)}
+                        className="btn-gold px-3 py-1.5 text-[10px]"
+                      >
+                        🔨 أعد عرضه
+                      </button>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div>
             <SectionTitle icon="trophy" title="نتائج مزاداتي" />
@@ -216,6 +345,8 @@ export default function AuctionPage() {
           </div>
         </div>
       </div>
+
+      {relistId && <RelistModal defId={relistId} onClose={() => setRelistId(null)} />}
     </div>
   );
 }

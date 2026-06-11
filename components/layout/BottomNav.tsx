@@ -3,48 +3,147 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { FEATURE_LEVELS } from "@/lib/constants";
+import { NAV_ITEMS, navById, sanitizeNavOrder, type NavDef } from "@/lib/nav";
+import { useGame, useGameDispatch } from "@/lib/state/GameContext";
 import { Icon } from "../ui/Icon";
+import { Modal } from "../ui/Modal";
 
-interface NavItem {
-  href: string;
-  label: string;
-  icon: string;
-  center?: boolean;
-  mobileHidden?: boolean;
+const HOME = NAV_ITEMS.find((n) => n.id === "home")!;
+const PROFILE = NAV_ITEMS.find((n) => n.id === "profile")!;
+
+function NavIcon({
+  item,
+  locked,
+  active,
+  size = 19,
+  badge,
+}: {
+  item: NavDef;
+  locked: boolean;
+  active: boolean;
+  size?: number;
+  badge?: number;
+}) {
+  return (
+    <span className="relative">
+      <Icon name={item.icon} size={size} className={active ? "nav-active" : undefined} />
+      {locked && (
+        <span className="absolute -left-1.5 -top-1.5 grid h-3.5 w-3.5 place-items-center rounded-full border border-gold/60 bg-bg text-gold">
+          <Icon name="lock" size={8} strokeWidth={2.4} />
+        </span>
+      )}
+      {!locked && (badge ?? 0) > 0 && (
+        <span className="absolute -left-2 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-down px-0.5 text-[8px] font-extrabold text-bg">
+          {badge}
+        </span>
+      )}
+    </span>
+  );
 }
 
-const ITEMS: NavItem[] = [
-  { href: "/currencies", label: "العملات", icon: "coins" },
-  { href: "/crypto", label: "الرقمية", icon: "coin", mobileHidden: true },
-  { href: "/trading", label: "التداول", icon: "chart", mobileHidden: true },
-  { href: "/bank", label: "البنك", icon: "bank" },
-  { href: "/", label: "الرئيسية", icon: "home", center: true },
-  { href: "/market", label: "السوق", icon: "cart" },
-  { href: "/auction", label: "المزاد", icon: "gavel", mobileHidden: true },
-  { href: "/companies", label: "الشركات", icon: "briefcase", mobileHidden: true },
-  { href: "/realestate", label: "العقارات", icon: "building", mobileHidden: true },
-];
+function CustomizeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const game = useGame();
+  const dispatch = useGameDispatch();
+  const order = sanitizeNavOrder(game.settings.navOrder);
 
-const SHEET_ITEMS: NavItem[] = [
-  ...ITEMS.filter((i) => i.mobileHidden),
-  { href: "/profile", label: "البروفايل", icon: "user" },
-];
+  const move = (idx: number, dir: -1 | 1) => {
+    const next = [...order];
+    const j = idx + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[idx], next[j]] = [next[j], next[idx]];
+    dispatch({ type: "SET_NAV_ORDER", order: next });
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="تخصيص الشريط السفلي ⚙️">
+      <p className="mb-3 text-[11px] leading-5 text-muted">
+        رتب الأقسام بالأسهم — أول 4 أقسام تظهر في الشريط السفلي حول زر الرئيسية،
+        والبقية في قائمة «المزيد».
+      </p>
+      <div className="space-y-1.5">
+        {order.map((id, idx) => {
+          const item = navById(id);
+          if (!item) return null;
+          const gate = item.feature ? FEATURE_LEVELS[item.feature] : null;
+          const locked = gate ? game.player.level < gate.level : false;
+          return (
+            <div key={id}>
+              {idx === 4 && (
+                <div className="my-2 flex items-center gap-2 text-[9px] font-bold text-gold">
+                  <span className="h-px flex-1 bg-gold/30" />
+                  ما فوق هذا الخط يظهر في الشريط ↑
+                  <span className="h-px flex-1 bg-gold/30" />
+                </div>
+              )}
+              <div className="flex items-center gap-2 rounded-xl border border-edge bg-card2 px-3 py-2">
+                <Icon name={item.icon} size={16} className={locked ? "text-muted" : "text-teal"} />
+                <span className="flex-1 text-xs font-semibold text-ink">
+                  {item.label}
+                  {locked && gate && (
+                    <span className="ms-2 inline-flex items-center gap-0.5 text-[9px] text-gold">
+                      <Icon name="lock" size={9} /> م{gate.level}
+                    </span>
+                  )}
+                </span>
+                <button
+                  onClick={() => move(idx, -1)}
+                  disabled={idx === 0}
+                  className="btn-ghost grid h-7 w-7 place-items-center disabled:opacity-30"
+                  aria-label="تقديم"
+                >
+                  <Icon name="arrow-up" size={13} />
+                </button>
+                <button
+                  onClick={() => move(idx, 1)}
+                  disabled={idx === order.length - 1}
+                  className="btn-ghost grid h-7 w-7 place-items-center disabled:opacity-30"
+                  aria-label="تأخير"
+                >
+                  <Icon name="arrow-down" size={13} />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
 
 export function BottomNav() {
   const pathname = usePathname();
+  const game = useGame();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [customizing, setCustomizing] = useState(false);
 
-  const linkClass = (item: NavItem, active: boolean) => {
-    if (item.center) {
-      return `-mt-5 flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-2xl border ${
-        active
-          ? "border-gold/70 bg-gradient-to-b from-gold/25 to-gold-deep/15 text-gold glow-gold"
-          : "border-edge bg-card text-muted"
-      }`;
-    }
-    return `flex flex-col items-center gap-0.5 px-1.5 py-1 text-[10px] font-semibold transition ${
-      active ? "text-gold" : "text-muted hover:text-ink"
-    }`;
+  const order = sanitizeNavOrder(game.settings.navOrder);
+  const barItems = order.slice(0, 4).map((id) => navById(id)!).filter(Boolean);
+  const sheetItems = [...order.slice(4).map((id) => navById(id)!).filter(Boolean), PROFILE];
+  const unreadChats = Object.values(game.chats).reduce((sum, t) => sum + t.unread, 0);
+
+  const isLocked = (item: NavDef) => {
+    if (!item.feature || game.settings.exploreMode) return false;
+    const gate = FEATURE_LEVELS[item.feature];
+    return gate ? game.player.level < gate.level : false;
+  };
+  const badgeFor = (item: NavDef) => (item.id === "friends" ? unreadChats : 0);
+
+  const sideLink = (item: NavDef, mobileVisible: boolean) => {
+    const active = pathname === item.href;
+    const locked = isLocked(item);
+    return (
+      <Link
+        key={item.id}
+        href={item.href}
+        className={`${mobileVisible ? "flex" : "hidden md:flex"} flex-col items-center gap-0.5 px-1.5 py-1 text-[10px] font-semibold transition ${
+          active ? "text-gold" : locked ? "text-muted/60" : "text-muted hover:text-ink"
+        }`}
+      >
+        <NavIcon item={item} locked={locked} active={active} badge={badgeFor(item)} />
+        {item.label}
+      </Link>
+    );
   };
 
   return (
@@ -55,52 +154,75 @@ export function BottomNav() {
           onClick={() => setSheetOpen(false)}
         >
           <div
-            className="absolute inset-x-3 bottom-20 card-base glow-teal grid grid-cols-3 gap-2 p-3 animate-toast-in"
+            className="absolute inset-x-3 bottom-20 card-base glow-teal p-3 animate-toast-in"
             onClick={(e) => e.stopPropagation()}
           >
-            {SHEET_ITEMS.map((item) => {
-              const active = pathname === item.href;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setSheetOpen(false)}
-                  className={`flex flex-col items-center gap-1.5 rounded-xl border p-3 text-[11px] font-semibold ${
-                    active
-                      ? "border-gold/50 bg-gold/10 text-gold"
-                      : "border-edge bg-card2 text-muted"
-                  }`}
-                >
-                  <Icon name={item.icon} size={20} />
-                  {item.label}
-                </Link>
-              );
-            })}
+            <div className="grid grid-cols-3 gap-2">
+              {sheetItems.map((item) => {
+                const active = pathname === item.href;
+                const locked = isLocked(item);
+                return (
+                  <Link
+                    key={item.id}
+                    href={item.href}
+                    onClick={() => setSheetOpen(false)}
+                    className={`flex flex-col items-center gap-1.5 rounded-xl border p-3 text-[11px] font-semibold ${
+                      active
+                        ? "border-gold/50 bg-gold/10 text-gold"
+                        : locked
+                          ? "border-edge bg-card2 text-muted/60"
+                          : "border-edge bg-card2 text-muted"
+                    }`}
+                  >
+                    <NavIcon item={item} locked={locked} active={active} size={20} badge={badgeFor(item)} />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => {
+                setSheetOpen(false);
+                setCustomizing(true);
+              }}
+              className="btn-ghost mt-2 flex w-full items-center justify-center gap-1.5 px-3 py-2.5 text-xs"
+            >
+              <Icon name="settings" size={14} />
+              تخصيص الشريط
+            </button>
           </div>
         </div>
       )}
 
+      <CustomizeModal open={customizing} onClose={() => setCustomizing(false)} />
+
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-edge bg-bg/92 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-around px-2 py-2">
-          {ITEMS.map((item) => {
-            const active = pathname === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`${item.mobileHidden ? "hidden md:flex" : "flex"} ${
-                  item.center ? "" : "flex-col"
-                } ${linkClass(item, active)}`}
-              >
-                <Icon name={item.icon} size={item.center ? 22 : 19} />
-                {item.center ? (
-                  <span className="text-[8px] font-bold">{item.label}</span>
-                ) : (
-                  item.label
-                )}
-              </Link>
-            );
+          {sideLink(barItems[0], true)}
+          {sideLink(barItems[1], true)}
+
+          {/* centered home */}
+          <Link
+            href="/"
+            className={`-mt-5 flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-2xl border ${
+              pathname === "/"
+                ? "border-gold/70 bg-gradient-to-b from-gold/25 to-gold-deep/15 text-gold glow-gold"
+                : "border-edge bg-card text-muted"
+            }`}
+          >
+            <Icon name={HOME.icon} size={22} className={pathname === "/" ? "nav-active" : undefined} />
+            <span className="text-[8px] font-bold">{HOME.label}</span>
+          </Link>
+
+          {sideLink(barItems[2], true)}
+          {sideLink(barItems[3], true)}
+
+          {/* the rest — desktop only */}
+          {order.slice(4).map((id) => {
+            const item = navById(id);
+            return item ? sideLink(item, false) : null;
           })}
+
           <button
             onClick={() => setSheetOpen((o) => !o)}
             className="flex flex-col items-center gap-0.5 px-1.5 py-1 text-[10px] font-semibold text-muted md:hidden"
@@ -114,7 +236,7 @@ export function BottomNav() {
               pathname === "/profile" ? "text-gold" : "text-muted hover:text-ink"
             }`}
           >
-            <Icon name="user" size={19} />
+            <Icon name="user" size={19} className={pathname === "/profile" ? "nav-active" : undefined} />
             البروفايل
           </Link>
         </div>

@@ -1,17 +1,24 @@
+import { PERSONAS_VERSION } from "./ai/personas";
 import {
+  AUCTION_TIERS,
   CANDLE_CAP,
   pk,
   SPARK_CAP,
   TICKS_PER_CANDLE,
 } from "./constants";
-import { uid } from "./format";
+import { seedBots } from "./engine/bots";
+import { seedFeed } from "./engine/feed";
+import { saudiDayKey, uid } from "./format";
+import { DEFAULT_NAV_ORDER } from "./nav";
 import type {
   AchievementDef,
   Auction,
+  AuctionTier,
   BorrowerOfferDef,
   BotDef,
   Candle,
   GameEventDef,
+  GameMode,
   GameState,
   LoanProductDef,
   MarketItemDef,
@@ -190,13 +197,24 @@ export function buildPriceBook(): PriceBook {
 
 /* =================== auctions =================== */
 
-const AUCTIONABLE = MARKET_ITEMS.filter(
+export const AUCTIONABLE = MARKET_ITEMS.filter(
   (m) => m.category === "rare" || m.category === "seasonal"
 );
 
-export function spawnAuction(now: number): Auction {
+function rollTier(): AuctionTier {
+  const r = Math.random();
+  return r < 0.6 ? "rare" : r < 0.9 ? "legendary" : "mythic";
+}
+
+/**
+ * AI-generated auction lot. Tiers (نادر/أسطوري/خارق) multiply the value —
+ * the auction house deals in the powerful stuff the market doesn't carry.
+ */
+export function spawnAuction(now: number, forceTier?: AuctionTier): Auction {
   const item = AUCTIONABLE[Math.floor(Math.random() * AUCTIONABLE.length)];
-  const startBid = Math.round(item.basePrice * 0.55);
+  const tier = forceTier ?? rollTier();
+  const mult = AUCTION_TIERS[tier].mult;
+  const startBid = Math.round(item.basePrice * mult * 0.55);
   const botPool = [...BOTS].sort(() => Math.random() - 0.5).slice(0, 2 + Math.floor(Math.random() * 2));
   return {
     id: uid("auc"),
@@ -211,18 +229,49 @@ export function spawnAuction(now: number): Auction {
     ],
     bots: botPool.map((b) => ({
       botId: b.id,
-      maxBudget: Math.round(item.basePrice * (0.9 + Math.random() * 0.5)),
+      maxBudget: Math.round(item.basePrice * mult * (0.9 + Math.random() * 0.5)),
       aggressiveness: 0.3 + Math.random() * 0.6,
     })),
+    sellerId: "system",
+    tier,
+  };
+}
+
+/** player re-lists an auction-won item; bots show up to bid */
+export function spawnPlayerAuction(
+  now: number,
+  itemDefId: string,
+  startBid: number
+): Auction {
+  const item = MARKET_ITEMS.find((m) => m.id === itemDefId);
+  const fair = item ? item.basePrice : startBid;
+  const botPool = [...BOTS].sort(() => Math.random() - 0.5).slice(0, 3 + Math.floor(Math.random() * 2));
+  return {
+    id: uid("auc"),
+    itemDefId,
+    endsAt: now + (4 + Math.random() * 4) * 60_000,
+    startBid,
+    currentBid: startBid,
+    leader: "بدون مزايدات",
+    leaderIsPlayer: false,
+    bids: [],
+    bots: botPool.map((b) => ({
+      botId: b.id,
+      maxBudget: Math.round(fair * (0.8 + Math.random() * 0.5)),
+      aggressiveness: 0.3 + Math.random() * 0.6,
+    })),
+    sellerId: "player",
+    tier: item?.rarity === "legendary" ? "legendary" : "rare",
   };
 }
 
 /* =================== initial state =================== */
 
-export function seed(now = Date.now()): GameState {
+export function seed(mode: GameMode = "demo", now = Date.now()): GameState {
   const prices = buildPriceBook();
-  return {
-    version: 1,
+  const s: GameState = {
+    version: 2,
+    mode,
     player: {
       name: "مستثمر جديد",
       avatarId: 1,
@@ -261,8 +310,24 @@ export function seed(now = Date.now()): GameState {
       },
     ],
     favoritePairs: ["USD/SAR", "EUR/SAR"],
-    settings: { exploreMode: true },
+    settings: { exploreMode: true, navOrder: [...DEFAULT_NAV_ORDER] },
     toasts: [],
     lastTickAt: now,
+    tickCount: 0,
+    bots: seedBots(),
+    botsVersion: PERSONAS_VERSION,
+    feed: [],
+    ihsanCases: [],
+    bankruptcy: { status: "none" },
+    tutorial: { status: "pending", step: 0, rewarded: -1 },
+    friends: [],
+    chats: {},
+    saleOffers: [],
+    partnerships: [],
+    feedback: {},
+    lastDailyKey: saudiDayKey(now),
+    dailyPostCount: 0,
   };
+  seedFeed(s, now);
+  return s;
 }

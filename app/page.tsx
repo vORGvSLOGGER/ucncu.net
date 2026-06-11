@@ -14,6 +14,7 @@ import { fmtClock, fmtCompact, fmtPct, fmtSigned } from "@/lib/format";
 import { GAME_EVENTS } from "@/lib/seed";
 import { breakdown, marketItemDef, netWorth } from "@/lib/selectors";
 import { useGame } from "@/lib/state/GameContext";
+import type { TxType } from "@/lib/types";
 
 const EVENT_KIND_META = {
   daily: { label: "يومي", color: "var(--color-teal)" },
@@ -27,6 +28,103 @@ const TIMEFRAMES = [
   { id: "all", label: "الكل", points: 96 },
 ] as const;
 
+/* categorized activity log — every interaction lives here, not in popups */
+const LOG_CATS: {
+  id: string;
+  label: string;
+  icon: string;
+  color: string;
+  types: TxType[];
+}[] = [
+  { id: "all", label: "الكل", icon: "refresh", color: "var(--color-ink)", types: [] },
+  { id: "trade", label: "تداول", icon: "chart", color: "var(--color-teal)", types: ["trade-open", "trade-close"] },
+  { id: "market", label: "السوق", icon: "cart", color: "var(--color-gold)", types: ["buy", "sell"] },
+  { id: "estate", label: "عقارات", icon: "building", color: "var(--color-violet)", types: ["property-buy", "property-sell", "rent"] },
+  { id: "auction", label: "مزاد", icon: "gavel", color: "var(--color-cyan)", types: ["auction-bid", "auction-win", "auction-refund", "auction-sale"] },
+  { id: "bank", label: "بنك", icon: "bank", color: "var(--color-up)", types: ["loan", "installment", "debt-payment", "lend", "lend-return"] },
+  { id: "fx", label: "عملات", icon: "coins", color: "var(--color-gold)", types: ["fx", "crypto-buy", "crypto-sell"] },
+  { id: "company", label: "شركات", icon: "briefcase", color: "var(--color-violet)", types: ["company", "shares-sale", "dividend", "upgrade", "partner-capital"] },
+  { id: "social", label: "اجتماعي", icon: "users", color: "var(--color-up)", types: ["donation-in", "donation-out", "direct-sale", "daily-bonus", "reward"] },
+];
+
+function catForTx(type: TxType) {
+  return LOG_CATS.find((c) => c.types.includes(type)) ?? LOG_CATS[0];
+}
+
+function ActivityLog() {
+  const game = useGame();
+  const [cat, setCat] = useState("all");
+  const def = LOG_CATS.find((c) => c.id === cat)!;
+  const txs = game.transactions
+    .filter((t) => def.types.length === 0 || def.types.includes(t.type))
+    .slice(0, 30);
+
+  return (
+    <Card className="p-4" data-tour="home-log">
+      <SectionTitle
+        icon="refresh"
+        title="سجل النشاط"
+        sub="كل عملياتك موثقة هنا مصنفة — بدون نوافذ مزعجة"
+      />
+      <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
+        {LOG_CATS.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => setCat(c.id)}
+            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[10px] font-bold transition ${
+              cat === c.id
+                ? "border-gold/60 bg-gold/15 text-gold"
+                : "border-edge bg-card2 text-muted hover:text-ink"
+            }`}
+          >
+            <Icon name={c.icon} size={11} />
+            {c.label}
+          </button>
+        ))}
+      </div>
+      {txs.length === 0 ? (
+        <div className="grid h-32 place-items-center text-center text-xs leading-6 text-muted">
+          لا عمليات في هذا التصنيف بعد —<br />
+          ابدأ من <Link href="/market" className="font-bold text-gold">السوق</Link> 🚀
+        </div>
+      ) : (
+        <div className="max-h-96 divide-y divide-edge/50 overflow-y-auto">
+          {txs.map((tx) => {
+            const c = catForTx(tx.type);
+            const isPnl = tx.type === "trade-close";
+            return (
+              <div key={tx.id} className="flex items-center gap-3 py-2.5 text-xs">
+                <span
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-edge"
+                  style={{ color: c.color }}
+                >
+                  <Icon name={c.icon} size={14} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-bold text-ink">
+                    {tx.label}
+                    {isPnl && (
+                      <span className={`ms-2 text-[9px] ${tx.amount >= 0 ? "text-up" : "text-down"}`}>
+                        {tx.amount >= 0 ? "ربح ✓" : "خسارة ✗"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-muted">
+                    {fmtClock(tx.t)} · {c.label}
+                  </div>
+                </div>
+                <b className={`shrink-0 ${tx.amount >= 0 ? "text-up" : "text-down"}`} dir="ltr">
+                  {fmtSigned(tx.amount, Math.abs(tx.amount) < 100 ? 2 : 0)} {tx.currency}
+                </b>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function HomePage() {
   const game = useGame();
   const [tf, setTf] = useState<(typeof TIMEFRAMES)[number]["id"]>("all");
@@ -39,7 +137,6 @@ export default function HomePage() {
   const deltaPct = series.length > 1 ? ((worth - series[0]) / (series[0] || 1)) * 100 : 0;
 
   const investments = b.inventory + b.trading + b.companies + b.lends;
-  const recentTx = game.transactions.slice(0, 5);
 
   /* opportunities derived from live state */
   const hotAuction = [...game.auctions].sort((a, z) => a.endsAt - z.endsAt)[0];
@@ -173,8 +270,13 @@ export default function HomePage() {
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {/* activity log — the single source of interaction history */}
+        <div className="lg:col-span-3">
+          <ActivityLog />
+        </div>
+
         {/* events */}
-        <Card className="p-4 lg:col-span-2">
+        <Card className="p-4 lg:col-span-3">
           <SectionTitle icon="star" title="أحداث المنصة" sub="فعاليات يومية وأسبوعية وشهرية بمكافآت حقيقية" />
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
             {GAME_EVENTS.map((e) => {
@@ -201,38 +303,6 @@ export default function HomePage() {
           </div>
         </Card>
 
-        {/* recent transactions */}
-        <Card className="p-4">
-          <SectionTitle
-            icon="refresh"
-            title="آخر العمليات"
-            action={
-              <Link href="/profile" className="text-[11px] font-bold text-teal hover:underline">
-                عرض السجل الكامل ←
-              </Link>
-            }
-          />
-          {recentTx.length === 0 ? (
-            <div className="grid h-40 place-items-center text-center text-xs leading-6 text-muted">
-              لا توجد عمليات بعد —<br />
-              ابدأ أول صفقة لك من <Link href="/market" className="font-bold text-gold">السوق</Link> 🚀
-            </div>
-          ) : (
-            <div className="divide-y divide-edge/50">
-              {recentTx.map((tx) => (
-                <div key={tx.id} className="flex items-center justify-between py-2.5 text-xs">
-                  <div className="min-w-0">
-                    <div className="truncate font-bold text-ink">{tx.label}</div>
-                    <div className="text-[10px] text-muted">{fmtClock(tx.t)}</div>
-                  </div>
-                  <b className={`shrink-0 ${tx.amount >= 0 ? "text-up" : "text-down"}`} dir="ltr">
-                    {fmtSigned(tx.amount, Math.abs(tx.amount) < 100 ? 2 : 0)} {tx.currency}
-                  </b>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
       </div>
     </div>
   );

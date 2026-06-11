@@ -204,3 +204,82 @@ body {
 .animate-pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
 }
+
+/* ---- living UI: ripple, page transitions, nav glow ---- */
+
+@keyframes ripple {
+  from {
+    transform: scale(0);
+    opacity: 0.35;
+  }
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+.ui-ripple {
+  position: absolute;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(245, 196, 81, 0.5), rgba(245, 196, 81, 0.05));
+  pointer-events: none;
+  animation: ripple 0.6s ease-out forwards;
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-page-in {
+  animation: page-in 0.3s ease-out both;
+}
+
+@keyframes nav-pop {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1.08);
+  }
+}
+
+.nav-active {
+  color: var(--color-gold);
+  animation: nav-pop 0.25s ease-out both;
+  filter: drop-shadow(0 0 8px rgba(245, 196, 81, 0.55));
+}
+
+@keyframes balance-pulse {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.12);
+    color: var(--color-gold);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-balance {
+  display: inline-block;
+  animation: balance-pulse 0.5s ease-out both;
+}
+
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+}

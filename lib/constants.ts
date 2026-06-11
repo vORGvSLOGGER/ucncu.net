@@ -1,6 +1,38 @@
-import type { CryptoCode, FiatCode } from "./types";
+import type { AuctionTier, CryptoCode, FiatCode, GameMode } from "./types";
 
-export const STORAGE_KEY = "ucncu:v1";
+/** release tag shown in "ما الجديد" + feedback survey key */
+export const UPDATE_VERSION = "2.0";
+
+export const LEGACY_STORAGE_KEY = "ucncu:v1";
+export const MODE_KEY = "ucncu:mode";
+export const storageKeyFor = (m: GameMode) => `ucncu:${m}:v2`;
+
+export const SAUDI_TZ = "Asia/Riyadh";
+
+/* ---- bankruptcy + إحسان ---- */
+export const GRACE_MS = 5 * 3600_000;
+export const IHSAN_DONOR_MIN_LEVEL = 25;
+export const IHSAN_RESCUER_MIN_LEVEL = 50;
+export const IHSAN_LISTED_MAX_LEVEL = 48;
+export const IHSAN_CAP = 12;
+
+/* ---- social ---- */
+export const FEED_CAP = 80;
+export const POST_MAX_LEN = 280;
+export const CHAT_CAP = 50;
+export const OFFERS_CAP = 20;
+export const DAILY_POST_XP_LIMIT = 5;
+
+/* ---- auction tiers ---- */
+export const AUCTION_TIERS: Record<
+  AuctionTier,
+  { label: string; color: string; mult: number }
+> = {
+  rare: { label: "نادر", color: "#a78bfa", mult: 1 },
+  legendary: { label: "أسطوري", color: "#f5c451", mult: 1.6 },
+  mythic: { label: "خارق", color: "#22d3ee", mult: 2.6 },
+};
+export const AUCTION_COMMISSION = 0.05;
 
 export const TICK_MS = 3000;
 export const SPARK_CAP = 60;

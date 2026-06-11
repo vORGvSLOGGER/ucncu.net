@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { AppShell } from "@/components/layout/AppShell";
+import { AuthProvider } from "@/lib/auth/AuthContext";
 import { GameProvider } from "@/lib/state/GameContext";
 import "./globals.css";
 
@@ -19,9 +20,11 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl">
       <body>
-        <GameProvider>
-          <AppShell>{children}</AppShell>
-        </GameProvider>
+        <AuthProvider>
+          <GameProvider>
+            <AppShell>{children}</AppShell>
+          </GameProvider>
+        </AuthProvider>
       </body>
     </html>
   );

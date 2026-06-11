@@ -1,6 +1,8 @@
 export type FiatCode = "UCN" | "USD" | "SAR" | "EUR" | "AED";
 export type CryptoCode = "BTC" | "ETH" | "UCNC" | "USDT";
 
+export type GameMode = "demo" | "real";
+
 export type MarketCategory = "goods" | "resources" | "rare" | "seasonal";
 export type Rarity = "common" | "uncommon" | "rare" | "legendary";
 
@@ -105,6 +107,8 @@ export interface OwnedItem {
   defId: string;
   qty: number;
   avgCost: number;
+  /** how many of `qty` came from auctions (eligible for re-listing) */
+  auctionQty?: number;
 }
 
 export interface OwnedProperty {
@@ -127,7 +131,7 @@ export interface Partner {
 export interface CompanyEvent {
   t: number;
   text: string;
-  kind: "founded" | "dividend" | "growth" | "drop" | "shares";
+  kind: "founded" | "dividend" | "growth" | "drop" | "shares" | "upgrade" | "partner";
 }
 
 export interface Company {
@@ -142,6 +146,8 @@ export interface Company {
   dividendsPaid: number;
   events: CompanyEvent[];
   nextDividendAt: number;
+  /** 1 ناشئة · 2 نامية · 3 رائدة — boosts dividend yield */
+  level: number;
 }
 
 export interface TradePosition {
@@ -187,6 +193,134 @@ export interface PlayerLend {
   status: "active" | "repaid" | "defaulted";
 }
 
+/* ---------- AI traders (v2) ---------- */
+
+export type BotStrategy =
+  | "momentum"
+  | "value"
+  | "contrarian"
+  | "whale"
+  | "scalper"
+  | "hodler";
+
+export interface BotPosition {
+  key: string; // price-book key (st:aramco, cx:BTC, mk:diamond)
+  side: "long" | "short";
+  alloc: number; // UCN allocated at entry
+  entry: number;
+  openedAt: number;
+}
+
+export interface BotState {
+  netWorth: number;
+  seedWorth: number;
+  level: number;
+  positions: BotPosition[];
+  history: number[]; // capped, leaderboard sparkline
+  lastActionAt: number;
+  bankrupt: boolean; // subject of an open إحسان case
+}
+
+/* ---------- social: feed, friends, chat, offers, partnerships ---------- */
+
+export type FeedKind =
+  | "trade"
+  | "commentary"
+  | "milestone"
+  | "bankruptcy"
+  | "ihsan"
+  | "user";
+
+export interface FeedPost {
+  id: string;
+  t: number;
+  authorId: string; // botId | "player" | "system"
+  kind: FeedKind;
+  text: string;
+  likes: number;
+  likedByPlayer: boolean;
+}
+
+export interface ChatMessage {
+  id: string;
+  from: "player" | "bot";
+  text: string;
+  t: number;
+}
+
+export interface ChatThread {
+  messages: ChatMessage[]; // capped
+  pendingReplyAt?: number;
+  unread: number;
+}
+
+export type OfferStatus = "pending" | "accepted" | "rejected" | "countered";
+
+export interface SaleOffer {
+  id: string;
+  toBotId: string;
+  itemDefId: string;
+  qty: number;
+  price: number;
+  status: OfferStatus;
+  counterPrice?: number;
+  decideAt: number;
+  t: number;
+  /** escrowed avg cost, restored if the offer falls through */
+  avgCost: number;
+}
+
+export type PartnershipStatus = "pending" | "active" | "declined";
+
+export interface Partnership {
+  id: string;
+  companyId: string;
+  botId: string;
+  botPct: number;
+  capital: number;
+  status: PartnershipStatus;
+  decideAt: number;
+  t: number;
+}
+
+/* ---------- bankruptcy + إحسان ---------- */
+
+export interface IhsanDonation {
+  donorId: string; // botId | "player"
+  amount: number;
+  t: number;
+}
+
+export type IhsanStatus = "open" | "rescued" | "failed";
+
+export interface IhsanCase {
+  id: string;
+  subjectId: string; // botId | "player"
+  startedAt: number;
+  deadline: number;
+  debt: number; // amount needed for full recovery
+  donated: number;
+  donations: IhsanDonation[];
+  status: IhsanStatus;
+  rescuedBy?: string;
+}
+
+export interface BankruptcyState {
+  status: "none" | "grace" | "gameover";
+  startedAt?: number;
+  deadline?: number; // persisted — survives offline
+  debtAtStart?: number;
+  caseId?: string;
+}
+
+/* ---------- tutorial ---------- */
+
+export interface TutorialState {
+  status: "pending" | "active" | "done" | "skipped";
+  step: number;
+  rewarded: number; // highest step index already XP-rewarded
+}
+
 export interface Bid {
   bidder: string;
   amount: number;
@@ -200,6 +334,8 @@ export interface AuctionBot {
   aggressiveness: number; // 0..1
 }
 
+export type AuctionTier = "rare" | "legendary" | "mythic";
+
 export interface Auction {
   id: string;
   itemDefId: string;
@@ -210,6 +346,8 @@ export interface Auction {
   leaderIsPlayer: boolean;
   bids: Bid[];
   bots: AuctionBot[];
+  sellerId: "system" | "player";
+  tier: AuctionTier;
 }
 
 export interface AuctionResult {
@@ -241,7 +379,15 @@ export type TxType =
   | "shares-sale"
   | "property-buy"
   | "property-sell"
-  | "reward";
+  | "reward"
+  | "donation-in"
+  | "donation-out"
+  | "debt-payment"
+  | "daily-bonus"
+  | "direct-sale"
+  | "partner-capital"
+  | "auction-sale"
+  | "upgrade";
 
 export interface Transaction {
   id: string;
@@ -277,7 +423,8 @@ export interface Player {
 }
 
 export interface GameState {
-  version: 1;
+  version: 2;
+  mode: GameMode;
   player: Player;
   balances: Record<FiatCode, number>;
   cryptoHoldings: Record<CryptoCode, { qty: number; avgCost: number }>;
@@ -296,9 +443,24 @@ export interface GameState {
   achievements: { id: string; unlockedAt: number }[];
   notifications: AppNotification[];
   favoritePairs: string[];
-  settings: { exploreMode: boolean };
+  settings: { exploreMode: boolean; navOrder: string[] };
   toasts: ToastMsg[];
   lastTickAt: number;
+  tickCount: number;
+  /* --- v2: living world --- */
+  bots: Record<string, BotState>;
+  botsVersion: number;
+  feed: FeedPost[];
+  ihsanCases: IhsanCase[];
+  bankruptcy: BankruptcyState;
+  tutorial: TutorialState;
+  friends: string[];
+  chats: Record<string, ChatThread>;
+  saleOffers: SaleOffer[];
+  partnerships: Partnership[];
+  feedback: Record<string, { stars: number; text: string; t: number }>;
+  lastDailyKey: string; // Saudi calendar day of last daily grant
+  dailyPostCount: number;
 }
 
 /* ---------- actions ---------- */
@@ -332,4 +494,26 @@ export type Action =
   | { type: "TOGGLE_FAVORITE"; pair: string }
   | { type: "MARK_NOTIFICATIONS_READ" }
   | { type: "TOGGLE_EXPLORE" }
-  | { type: "DISMISS_TOAST"; id: string };
+  | { type: "DISMISS_TOAST"; id: string }
+  /* --- v2 --- */
+  | { type: "TUTORIAL_START" }
+  | { type: "TUTORIAL_NEXT" }
+  | { type: "TUTORIAL_PREV" }
+  | { type: "TUTORIAL_SKIP" }
+  | { type: "ADD_POST"; text: string }
+  | { type: "LIKE_POST"; postId: string }
+  | { type: "DONATE_IHSAN"; caseId: string; amount: number }
+  | { type: "RESCUE_IHSAN"; caseId: string }
+  | { type: "PAY_DEBT"; loanId: string }
+  | { type: "SET_NAV_ORDER"; order: string[] }
+  | { type: "ADD_FRIEND"; botId: string }
+  | { type: "REMOVE_FRIEND"; botId: string }
+  | { type: "SEND_CHAT"; botId: string; text: string }
+  | { type: "MARK_CHAT_READ"; botId: string }
+  | { type: "OFFER_SALE"; botId: string; itemDefId: string; qty: number; price: number }
+  | { type: "ACCEPT_COUNTER"; offerId: string }
+  | { type: "CANCEL_OFFER"; offerId: string }
+  | { type: "INVITE_PARTNER"; botId: string; companyId: string }
+  | { type: "RELIST_AUCTION"; itemDefId: string; startBid: number }
+  | { type: "UPGRADE_COMPANY"; companyId: string }
+  | { type: "SUBMIT_FEEDBACK"; stars: number; text: string };

@@ -7,9 +7,10 @@ import {
 } from "../constants";
 import { fmtInt } from "../format";
 import { BORROWER_OFFERS, botById } from "../seed";
-import { propertyDef } from "../selectors";
+import { insolvent, propertyDef } from "../selectors";
 import type { GameState } from "../types";
-import { addNotif, addToast, addTx } from "./log";
+import { enterBankruptcy } from "./bankruptcy";
+import { addNotif, addTx } from "./log";
 import { awardXp, checkAchievements } from "./xp";
 
 export interface AccrualSummary {
@@ -54,10 +55,7 @@ export function processAccruals(
       p.rentCollected += collected;
       summary.rent += collected;
       addTx(s, "rent", `إيجار ${def.name}`, collected, "UCN", now);
-      if (!quiet) {
-        addToast(s, `🏠 +${fmtInt(collected)} UCN إيجار ${def.name}`, "success");
-        awardXp(s, 5);
-      }
+      if (!quiet) awardXp(s, 5);
     }
   }
 
@@ -67,8 +65,10 @@ export function processAccruals(
     let paid = 0;
     let i = 0;
     while (c.nextDividendAt <= now && i < maxDivIter) {
+      // company level (ناشئة/نامية/رائدة) boosts the dividend yield
+      const levelBoost = 1 + 0.25 * ((c.level || 1) - 1);
       const dividend = Math.round(
-        c.valuation * DIVIDEND_YIELD * (c.ownershipPct / 100)
+        c.valuation * DIVIDEND_YIELD * levelBoost * (c.ownershipPct / 100)
       );
       paid += dividend;
       const move = 1 + (Math.random() * 0.05 - 0.018);
@@ -95,7 +95,6 @@ export function processAccruals(
       });
       if (c.events.length > 20) c.events.length = 20;
       addTx(s, "dividend", `أرباح شركة ${c.name}`, paid, "UCN", now);
-      if (!quiet) addToast(s, `💼 +${fmtInt(paid)} UCN أرباح ${c.name}`, "success");
     }
   }
 
@@ -126,6 +125,8 @@ export function processAccruals(
           "warning",
           now
         );
+        // insolvency on a missed installment = bankruptcy grace period
+        if (insolvent(s)) enterBankruptcy(s, now);
       }
       l.nextDueAt += INSTALLMENT_PERIOD_MS;
       i++;
@@ -158,7 +159,7 @@ export function processAccruals(
       summary.lendsReturned += repay;
       addTx(s, "lend-return", `سداد قرض من ${bot.name}`, repay, "UCN", now);
       if (!quiet) {
-        addToast(s, `🏦 ${bot.name} سدد قرضه: +${fmtInt(repay)} UCN`, "success");
+        addNotif(s, `${bot.name} سدد قرضه 🏦`, `+${fmtInt(repay)} UCN أُودعت في رصيدك`, "success", now);
         awardXp(s, 15);
       }
     }

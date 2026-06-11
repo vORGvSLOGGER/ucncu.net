@@ -205,6 +205,13 @@ export default function BankPage() {
                         </span>
                         {l.missed > 0 && <span className="font-bold text-down">تعثر ×{l.missed}</span>}
                       </div>
+                      <button
+                        disabled={game.balances.UCN < l.installment}
+                        onClick={() => dispatch({ type: "PAY_DEBT", loanId: l.id })}
+                        className="btn-teal mt-2 w-full py-1.5 text-[10px]"
+                      >
+                        سداد مبكر لقسط الآن — {fmtInt(l.installment)} UCN (+10 XP ورفع التقييم)
+                      </button>
                     </div>
                   );
                 })}
@@ -214,7 +221,7 @@ export default function BankPage() {
         </Card>
 
         {/* credit score */}
-        <Card className="p-4">
+        <Card className="p-4" data-tour="bank-credit">
           <SectionTitle icon="shield" title="تحليل التقييم الائتماني" sub="تفاصيل تقييمك وتطوره" />
           <div className="flex justify-center">
             <Gauge value={score} min={300} max={1000} size={190} label={String(score)} sub={scoreLabel} />

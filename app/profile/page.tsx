@@ -7,14 +7,24 @@ import { Icon } from "@/components/ui/Icon";
 import { Modal } from "@/components/ui/Modal";
 import { PageTitle } from "@/components/ui/PageTitle";
 import { ProgressRing } from "@/components/ui/ProgressRing";
+import { Sparkline } from "@/components/ui/Sparkline";
 import { TabSwitcher } from "@/components/ui/TabSwitcher";
-import { CRYPTO_CODES, CRYPTO_META, FIAT_CODES, FIAT_META, rankForLevel } from "@/lib/constants";
+import { useAuth } from "@/lib/auth/AuthContext";
+import {
+  CRYPTO_CODES,
+  CRYPTO_META,
+  FIAT_CODES,
+  FIAT_META,
+  rankForLevel,
+  UPDATE_VERSION,
+} from "@/lib/constants";
 import { fmtXp, xpSummary } from "@/lib/engine/xp";
 import { fmtClock, fmtCompact, fmtDec, fmtSigned } from "@/lib/format";
+import { activeFrame, nextPerk, PERKS } from "@/lib/perks";
 import { ACHIEVEMENTS, BOTS, seed } from "@/lib/seed";
 import { breakdown, cryptoUcn, netWorth } from "@/lib/selectors";
 import { clearState } from "@/lib/state/persistence";
-import { useGame, useGameDispatch } from "@/lib/state/GameContext";
+import { useGame, useGameDispatch, useGameMode } from "@/lib/state/GameContext";
 import type { TxType } from "@/lib/types";
 
 const TX_FILTERS: { id: string; label: string; types: TxType[] }[] = [
@@ -23,14 +33,136 @@ const TX_FILTERS: { id: string; label: string; types: TxType[] }[] = [
   { id: "trade", label: "التداول", types: ["trade-open", "trade-close"] },
   { id: "fx", label: "العملات", types: ["fx", "crypto-buy", "crypto-sell"] },
   { id: "estate", label: "العقارات", types: ["property-buy", "property-sell", "rent"] },
-  { id: "bank", label: "البنك", types: ["loan", "installment", "lend", "lend-return"] },
-  { id: "company", label: "الشركات", types: ["company", "shares-sale", "dividend"] },
-  { id: "auction", label: "المزاد", types: ["auction-bid", "auction-win", "auction-refund"] },
+  { id: "bank", label: "البنك", types: ["loan", "installment", "lend", "lend-return", "debt-payment"] },
+  { id: "company", label: "الشركات", types: ["company", "shares-sale", "dividend", "upgrade", "partner-capital"] },
+  { id: "auction", label: "المزاد", types: ["auction-bid", "auction-win", "auction-refund", "auction-sale"] },
+  { id: "social", label: "اجتماعي", types: ["donation-in", "donation-out", "direct-sale", "daily-bonus", "reward"] },
 ];
+
+function FeedbackCard() {
+  const game = useGame();
+  const dispatch = useGameDispatch();
+  const existing = game.feedback[UPDATE_VERSION];
+  const [stars, setStars] = useState(existing?.stars ?? 0);
+  const [text, setText] = useState(existing?.text ?? "");
+
+  return (
+    <Card glow="teal" className="p-4">
+      <SectionTitle
+        icon="star"
+        title={`قيّم التحديث ${UPDATE_VERSION} ✨`}
+        sub="التطوير هنا يقوده المجتمع — رأيك يحدد ما نبنيه بعد ذلك"
+      />
+      <div className="mb-3 flex items-center justify-center gap-1" dir="ltr">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button key={n} onClick={() => setStars(n)} aria-label={`${n} نجوم`}>
+            <Icon
+              name="star"
+              size={28}
+              className={n <= stars ? "text-gold" : "text-edge"}
+              fill={n <= stars ? "currentColor" : "none"}
+            />
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        maxLength={500}
+        rows={2}
+        placeholder="ملاحظة اختيارية: ما الذي أعجبك؟ ما الذي نطوره بعد ذلك؟"
+        className="w-full resize-none rounded-xl border border-edge bg-card2 px-3 py-2.5 text-xs text-ink outline-none focus:border-teal/50"
+      />
+      <button
+        disabled={stars === 0}
+        onClick={() => dispatch({ type: "SUBMIT_FEEDBACK", stars, text })}
+        className="btn-teal mt-2 w-full py-2.5 text-sm"
+      >
+        {existing ? "تحديث التقييم" : "إرسال التقييم (+20 XP)"}
+      </button>
+      {existing && (
+        <p className="mt-2 text-center text-[10px] text-up">
+          ✓ شكرًا لتقييمك — يمكنك تعديله في أي وقت
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function PerksLadder() {
+  const game = useGame();
+  const [showAll, setShowAll] = useState(false);
+  const upcoming = nextPerk(game.player.level);
+  const list = showAll
+    ? PERKS
+    : PERKS.filter(
+        (p) =>
+          p.milestone ||
+          Math.abs(p.level - game.player.level) <= 3 ||
+          p.level === upcoming?.level
+      );
+
+  return (
+    <div className="mt-4" data-tour="perks-ladder">
+      <SectionTitle
+        icon="bolt"
+        title="سلم الميزات"
+        sub="كل مستوى يفتح ميزة — هذه خريطة طريقك إلى القمة"
+      />
+      <Card className="max-h-105 space-y-1 overflow-y-auto p-2">
+        {list.map((p) => {
+          const unlocked = game.player.level >= p.level;
+          const isNext = p.level === upcoming?.level;
+          return (
+            <div
+              key={p.level}
+              className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${
+                isNext
+                  ? "border-gold/60 bg-gold/10 glow-gold"
+                  : unlocked
+                    ? "border-up/25 bg-up/5"
+                    : "border-edge bg-card2 opacity-70"
+              } ${p.milestone ? "py-3" : ""}`}
+            >
+              <span
+                className={`grid h-8 w-8 shrink-0 place-items-center rounded-full border text-[10px] font-extrabold ${
+                  unlocked ? "border-up/50 bg-up/10 text-up" : "border-edge bg-card text-muted"
+                }`}
+              >
+                {p.level}
+              </span>
+              <Icon
+                name={unlocked ? p.icon : "lock"}
+                size={p.milestone ? 20 : 16}
+                className={unlocked ? "text-gold" : "text-muted"}
+              />
+              <div className="min-w-0 flex-1">
+                <div className={`text-[11px] font-bold ${p.milestone ? "text-gold" : "text-ink"}`}>
+                  {p.name}
+                  {isNext && <span className="ms-2 text-[9px] text-gold">← القادمة</span>}
+                </div>
+                <div className="truncate text-[9px] text-muted">{p.desc}</div>
+              </div>
+              {unlocked && <Icon name="check" size={14} className="shrink-0 text-up" />}
+            </div>
+          );
+        })}
+        <button
+          onClick={() => setShowAll((v) => !v)}
+          className="btn-ghost w-full py-2 text-[11px]"
+        >
+          {showAll ? "عرض المعالم القريبة فقط" : "عرض كل المستويات (100)"}
+        </button>
+      </Card>
+    </div>
+  );
+}
 
 export default function ProfilePage() {
   const game = useGame();
   const dispatch = useGameDispatch();
+  const { mode, switchMode } = useGameMode();
+  const { status: authStatus, email, signOut } = useAuth();
   const [nameModal, setNameModal] = useState(false);
   const [resetModal, setResetModal] = useState(false);
   const [nameInput, setNameInput] = useState(game.player.name);
@@ -39,10 +171,30 @@ export default function ProfilePage() {
   const xp = xpSummary(game);
   const b = breakdown(game);
   const worth = netWorth(game);
+  const frame = activeFrame(game.player.level);
 
   const board = [
-    ...BOTS.map((bot) => ({ name: bot.name, avatarId: bot.avatarId, worth: bot.netWorth, me: false })),
-    { name: game.player.name, avatarId: game.player.avatarId, worth, me: true },
+    ...BOTS.map((bot) => {
+      const live = game.bots[bot.id];
+      return {
+        name: bot.name,
+        avatarId: bot.avatarId,
+        worth: live?.netWorth ?? bot.netWorth,
+        level: live?.level,
+        history: live?.history,
+        bankrupt: live?.bankrupt ?? false,
+        me: false,
+      };
+    }),
+    {
+      name: game.player.name,
+      avatarId: game.player.avatarId,
+      worth,
+      level: game.player.level,
+      history: game.netWorthHistory.slice(-24),
+      bankrupt: false,
+      me: true,
+    },
   ].sort((a, z) => z.worth - a.worth);
 
   const filterDef = TX_FILTERS.find((f) => f.id === txFilter)!;
@@ -58,7 +210,13 @@ export default function ProfilePage() {
       <Card glow="gold" className="p-5">
         <div className="flex flex-wrap items-center gap-5">
           <div className="flex items-center gap-4">
-            <Avatar name={game.player.name} avatarId={game.player.avatarId} size={72} ring />
+            <Avatar
+              name={game.player.name}
+              avatarId={game.player.avatarId}
+              size={72}
+              ring
+              ringColor={frame}
+            />
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-extrabold text-ink">{game.player.name}</h2>
@@ -162,9 +320,9 @@ export default function ProfilePage() {
           </div>
         </Card>
 
-        {/* leaderboard */}
+        {/* leaderboard — live bot wealth */}
         <Card className="p-4">
-          <SectionTitle icon="trophy" title="لوحة المتصدرين" sub="حسب إجمالي الثروة" />
+          <SectionTitle icon="trophy" title="لوحة المتصدرين" sub="ثروات حية تتحرك مع تداولاتهم" />
           <div className="max-h-80 space-y-1.5 overflow-y-auto">
             {board.map((p, i) => (
               <div
@@ -180,16 +338,42 @@ export default function ProfilePage() {
                 >
                   {i + 1}
                 </span>
-                <Avatar name={p.name} avatarId={p.avatarId} size={26} />
+                <div className="relative">
+                  <Avatar name={p.name} avatarId={p.avatarId} size={26} />
+                  {p.level !== undefined && (
+                    <span className="absolute -bottom-1 -right-1 grid h-3.5 min-w-3.5 place-items-center rounded-full border border-edge bg-bg px-0.5 text-[7px] font-extrabold text-teal">
+                      {p.level}
+                    </span>
+                  )}
+                </div>
                 <span className={`min-w-0 flex-1 truncate font-bold ${p.me ? "text-gold" : "text-ink"}`}>
                   {p.name}
                   {p.me && " (أنت)"}
+                  {p.bankrupt && <span className="ms-1 text-[9px] text-down">💥 مفلس</span>}
                 </span>
+                {p.history && p.history.length > 2 && (
+                  <Sparkline
+                    data={p.history}
+                    width={48}
+                    height={16}
+                    color={
+                      p.history[p.history.length - 1] >= p.history[0]
+                        ? "var(--color-up)"
+                        : "var(--color-down)"
+                    }
+                  />
+                )}
                 <b className="text-muted">{fmtCompact(p.worth)}</b>
               </div>
             ))}
           </div>
         </Card>
+      </div>
+
+      <PerksLadder />
+
+      <div className="mt-4">
+        <FeedbackCard />
       </div>
 
       {/* achievements */}
@@ -279,9 +463,48 @@ export default function ProfilePage() {
           </div>
           <div className="flex items-center justify-between p-3.5">
             <div>
+              <div className="text-xs font-bold text-ink">طور اللعب</div>
+              <p className="mt-0.5 text-[10px] leading-4 text-muted">
+                أنت الآن في {mode === "real" ? "طور الحقيقة" : "الطور التجريبي"} — لكل طور
+                اقتصاد وتخزين منفصل تمامًا
+              </p>
+            </div>
+            <button onClick={switchMode} className="btn-ghost px-4 py-1.5 text-xs">
+              تغيير الطور
+            </button>
+          </div>
+          <div className="flex items-center justify-between p-3.5">
+            <div>
+              <div className="text-xs font-bold text-ink">الجولة التعليمية</div>
+              <p className="mt-0.5 text-[10px] leading-4 text-muted">
+                أعد جولة الشرح التفاعلية في أي وقت (مكافآت XP لا تُصرف مرتين)
+              </p>
+            </div>
+            <button
+              onClick={() => dispatch({ type: "TUTORIAL_START" })}
+              className="btn-ghost px-4 py-1.5 text-xs"
+            >
+              إعادة الجولة 🎓
+            </button>
+          </div>
+          {authStatus === "authed" && (
+            <div className="flex items-center justify-between p-3.5">
+              <div>
+                <div className="text-xs font-bold text-ink">الحساب</div>
+                <p className="mt-0.5 text-[10px] text-muted" dir="ltr">
+                  {email}
+                </p>
+              </div>
+              <button onClick={() => signOut()} className="btn-ghost px-4 py-1.5 text-xs">
+                تسجيل الخروج
+              </button>
+            </div>
+          )}
+          <div className="flex items-center justify-between p-3.5">
+            <div>
               <div className="text-xs font-bold text-down">إعادة تعيين اللعبة</div>
               <p className="mt-0.5 text-[10px] text-muted">
-                حذف كل التقدم والبدء من جديد برصيد 10,000 UCN
+                حذف كل تقدم هذا الطور والبدء من جديد برصيد 10,000 UCN
               </p>
             </div>
             <button
@@ -326,8 +549,8 @@ export default function ProfilePage() {
           </button>
           <button
             onClick={() => {
-              clearState();
-              dispatch({ type: "RESET", state: seed() });
+              clearState(mode ?? "demo");
+              dispatch({ type: "RESET", state: seed(mode ?? "demo") });
               setResetModal(false);
             }}
             className="rounded-xl border border-down/50 bg-down/15 py-2.5 text-sm font-bold text-down"

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Card, SectionTitle } from "@/components/ui/Card";
 import { AmountInput } from "@/components/ui/AmountInput";
@@ -12,9 +13,113 @@ import { PageTitle } from "@/components/ui/PageTitle";
 import { ProgressRing } from "@/components/ui/ProgressRing";
 import { StatCard } from "@/components/ui/StatCard";
 import { fmtClock, fmtCompact, fmtInt, fmtPct } from "@/lib/format";
-import { BOTS, SECTORS } from "@/lib/seed";
+import { BOTS, botById, SECTORS } from "@/lib/seed";
 import { useGame, useGameDispatch } from "@/lib/state/GameContext";
 import type { Company } from "@/lib/types";
+
+const LEVEL_LABELS = ["", "ناشئة", "نامية", "رائدة"];
+
+function UpgradeModal({ company, onClose }: { company: Company; onClose: () => void }) {
+  const game = useGame();
+  const dispatch = useGameDispatch();
+  const level = company.level || 1;
+  const cost = Math.round(company.valuation * (level === 1 ? 0.3 : 0.5));
+  const nextLabel = LEVEL_LABELS[level + 1];
+  const can = game.balances.UCN >= cost;
+
+  return (
+    <Modal open onClose={onClose} title={`ترقية ${company.name} 🏆`}>
+      <div className="mb-3 flex items-center justify-center gap-3 text-sm font-extrabold">
+        <span className="text-muted">{LEVEL_LABELS[level]}</span>
+        <Icon name="arrow-up" size={16} className="rotate-90 text-gold" />
+        <span className="text-gold">{nextLabel}</span>
+      </div>
+      <div className="space-y-2 text-[11px] leading-5 text-muted">
+        <div className="flex items-center justify-between rounded-xl border border-edge bg-card2 p-3">
+          <span>تكلفة الترقية (تُضخ في الشركة)</span>
+          <b className="text-ink">{fmtInt(cost)} UCN</b>
+        </div>
+        <div className="flex items-center justify-between rounded-xl border border-edge bg-card2 p-3">
+          <span>عائد التوزيعات</span>
+          <b className="text-up">+25% لكل مستوى</b>
+        </div>
+        <div className="flex items-center justify-between rounded-xl border border-edge bg-card2 p-3">
+          <span>التقييم بعد الترقية</span>
+          <b className="text-gold">≈ {fmtInt(Math.round((company.valuation + cost) * 1.05))} UCN</b>
+        </div>
+      </div>
+      <button
+        disabled={!can}
+        onClick={() => {
+          dispatch({ type: "UPGRADE_COMPANY", companyId: company.id });
+          onClose();
+        }}
+        className="btn-gold mt-4 w-full py-2.5 text-sm"
+      >
+        {can ? `رقِّ الشركة — ${fmtInt(cost)} UCN` : `تحتاج ${fmtInt(cost)} UCN`}
+      </button>
+    </Modal>
+  );
+}
+
+function InvitePartnerModal({ company, onClose }: { company: Company; onClose: () => void }) {
+  const game = useGame();
+  const dispatch = useGameDispatch();
+  const eligible = game.friends.filter(
+    (id) =>
+      !company.partners.some((p) => p.name === botById(id).name) &&
+      !game.partnerships.some(
+        (p) => p.companyId === company.id && p.botId === id && p.status === "pending"
+      )
+  );
+
+  return (
+    <Modal open onClose={onClose} title={`دعوة شريك إلى ${company.name}`}>
+      {game.friends.length === 0 ? (
+        <p className="py-4 text-center text-xs leading-6 text-muted">
+          الشراكات تُعقد بين الأصدقاء —{" "}
+          <Link href="/friends" className="font-bold text-teal hover:underline">
+            أضف أصدقاء أولًا ←
+          </Link>
+        </p>
+      ) : eligible.length === 0 ? (
+        <p className="py-4 text-center text-xs text-muted">
+          كل أصدقائك شركاء بالفعل أو يدرسون دعوات سابقة
+        </p>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-[11px] leading-5 text-muted">
+            الشريك يضخ 20-35% من التقييم رأسمالًا مقابل حصة — وترتفع قيمة الشركة بقوة
+            الاسم المنضم.
+          </p>
+          {eligible.map((id) => {
+            const bot = botById(id);
+            const live = game.bots[id];
+            return (
+              <button
+                key={id}
+                onClick={() => {
+                  dispatch({ type: "INVITE_PARTNER", botId: id, companyId: company.id });
+                  onClose();
+                }}
+                className="flex w-full items-center gap-3 rounded-xl border border-edge bg-card2 p-3 text-start transition hover:border-gold/40"
+              >
+                <Avatar name={bot.name} avatarId={bot.avatarId} size={32} />
+                <div className="flex-1">
+                  <div className="text-xs font-bold text-ink">{bot.name}</div>
+                  <div className="text-[9px] text-muted">
+                    ثروته {fmtCompact(live?.netWorth ?? 0)} UCN · م{live?.level}
+                  </div>
+                </div>
+                <Icon name="handshake" size={15} className="text-teal" />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
+  );
+}
 
 function FoundCompanyModal({ onClose }: { onClose: () => void }) {
   const game = useGame();
@@ -158,6 +263,8 @@ export default function CompaniesPage() {
   const game = useGame();
   const [foundOpen, setFoundOpen] = useState(false);
   const [sellCompany, setSellCompany] = useState<Company | null>(null);
+  const [upgradeCompany, setUpgradeCompany] = useState<Company | null>(null);
+  const [inviteCompany, setInviteCompany] = useState<Company | null>(null);
 
   const totalValuation = game.companies.reduce((s, c) => s + c.valuation, 0);
   const myEquity = game.companies.reduce((s, c) => s + (c.valuation * c.ownershipPct) / 100, 0);
@@ -244,8 +351,26 @@ export default function CompaniesPage() {
                     <Icon name={sector?.icon ?? "briefcase"} size={22} />
                   </span>
                   <div>
-                    <div className="text-sm font-extrabold text-ink">{c.name}</div>
-                    <div className="text-[10px] text-muted">{sector?.name}</div>
+                    <div className="flex items-center gap-2 text-sm font-extrabold text-ink">
+                      {c.name}
+                      <span className="flex items-center gap-0.5" title={LEVEL_LABELS[c.level || 1]}>
+                        {[1, 2, 3].map((n) => (
+                          <Icon
+                            key={n}
+                            name="star"
+                            size={11}
+                            className={n <= (c.level || 1) ? "text-gold" : "text-edge"}
+                            fill={n <= (c.level || 1) ? "currentColor" : "none"}
+                          />
+                        ))}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-muted">
+                      {sector?.name} · شركة {LEVEL_LABELS[c.level || 1]}
+                      {(c.level || 1) > 1 && (
+                        <span className="text-up"> · توزيعات +{((c.level || 1) - 1) * 25}%</span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <ProgressRing pct={c.ownershipPct} size={52} color="var(--color-gold)">
@@ -317,16 +442,32 @@ export default function CompaniesPage() {
                 ))}
               </div>
 
-              <div className="mt-3 flex items-center justify-between gap-2">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11px] text-muted">
                   أرباح موزعة: <b className="text-up">+{fmtInt(c.dividendsPaid)} UCN</b>
                 </span>
-                <button
-                  onClick={() => setSellCompany(c)}
-                  className="btn-ghost px-3.5 py-1.5 text-[11px]"
-                >
-                  بيع حصص
-                </button>
+                <div className="flex gap-1.5">
+                  {(c.level || 1) < 3 && (
+                    <button
+                      onClick={() => setUpgradeCompany(c)}
+                      className="btn-gold px-3.5 py-1.5 text-[11px]"
+                    >
+                      ⬆ ترقية
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setInviteCompany(c)}
+                    className="btn-teal px-3.5 py-1.5 text-[11px]"
+                  >
+                    🤝 شريك
+                  </button>
+                  <button
+                    onClick={() => setSellCompany(c)}
+                    className="btn-ghost px-3.5 py-1.5 text-[11px]"
+                  >
+                    بيع حصص
+                  </button>
+                </div>
               </div>
             </Card>
           );
@@ -338,6 +479,18 @@ export default function CompaniesPage() {
         <SellSharesModal
           company={game.companies.find((c) => c.id === sellCompany.id) ?? sellCompany}
           onClose={() => setSellCompany(null)}
+        />
+      )}
+      {upgradeCompany && (
+        <UpgradeModal
+          company={game.companies.find((c) => c.id === upgradeCompany.id) ?? upgradeCompany}
+          onClose={() => setUpgradeCompany(null)}
+        />
+      )}
+      {inviteCompany && (
+        <InvitePartnerModal
+          company={game.companies.find((c) => c.id === inviteCompany.id) ?? inviteCompany}
+          onClose={() => setInviteCompany(null)}
         />
       )}
     </LevelGate>

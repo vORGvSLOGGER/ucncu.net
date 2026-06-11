@@ -1,4 +1,4 @@
-import { CRYPTO_META, FIAT_META } from "./constants";
+import { CRYPTO_META, FIAT_META, SAUDI_TZ } from "./constants";
 import type { CryptoCode, FiatCode } from "./types";
 
 const nf = (min: number, max: number) =>
@@ -84,11 +84,52 @@ export function fmtCountdown(msLeft: number): string {
 export function fmtClock(t: number): string {
   return new Intl.DateTimeFormat("ar", {
     numberingSystem: "latn",
+    timeZone: SAUDI_TZ,
     hour: "2-digit",
     minute: "2-digit",
     day: "2-digit",
     month: "2-digit",
   }).format(new Date(t));
+}
+
+const liveClockFmt = new Intl.DateTimeFormat("ar", {
+  numberingSystem: "latn",
+  timeZone: SAUDI_TZ,
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+const weekdayFmt = new Intl.DateTimeFormat("ar", {
+  timeZone: SAUDI_TZ,
+  weekday: "long",
+});
+
+/** "14:32:08 · الخميس" — Riyadh time, for the live header clock */
+export function fmtLiveClock(t: number): { time: string; weekday: string } {
+  return { time: liveClockFmt.format(new Date(t)), weekday: weekdayFmt.format(new Date(t)) };
+}
+
+const dayKeyFmt = new Intl.DateTimeFormat("en-CA", {
+  timeZone: SAUDI_TZ,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/** Saudi calendar day key: "2026-06-11" — drives daily events/bonuses */
+export function saudiDayKey(t: number): string {
+  return dayKeyFmt.format(new Date(t));
+}
+
+/** "04:59:12" hours countdown (for the 5h bankruptcy grace) */
+export function fmtCountdownLong(msLeft: number): string {
+  const s = Math.max(0, Math.floor(msLeft / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
 let uidCounter = 0;

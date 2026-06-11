@@ -1,17 +1,22 @@
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { Icon } from "./Icon";
 
 export function Card({
   children,
   className = "",
   glow,
+  ...rest
 }: {
   children: ReactNode;
   className?: string;
   glow?: "gold" | "teal";
-}) {
+} & HTMLAttributes<HTMLDivElement>) {
   const glowClass = glow === "gold" ? "glow-gold" : glow === "teal" ? "glow-teal" : "";
-  return <div className={`card-base ${glowClass} ${className}`}>{children}</div>;
+  return (
+    <div className={`card-base ${glowClass} ${className}`} {...rest}>
+      {children}
+    </div>
+  );
 }
 
 export function SectionTitle({

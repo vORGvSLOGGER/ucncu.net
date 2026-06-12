@@ -7,6 +7,7 @@ import {
   TICKS_PER_CANDLE,
 } from "./constants";
 import { seedBots } from "./engine/bots";
+import { seedBotCompanies } from "./engine/company";
 import { seedFeed } from "./engine/feed";
 import { saudiDayKey, uid } from "./format";
 import { DEFAULT_NAV_ORDER } from "./nav";
@@ -270,7 +271,7 @@ export function spawnPlayerAuction(
 export function seed(mode: GameMode = "demo", now = Date.now()): GameState {
   const prices = buildPriceBook();
   const s: GameState = {
-    version: 2,
+    version: 3,
     mode,
     player: {
       name: "مستثمر جديد",
@@ -310,7 +311,7 @@ export function seed(mode: GameMode = "demo", now = Date.now()): GameState {
       },
     ],
     favoritePairs: ["USD/SAR", "EUR/SAR"],
-    settings: { exploreMode: true, navOrder: [...DEFAULT_NAV_ORDER] },
+    settings: { exploreMode: true, navOrder: [...DEFAULT_NAV_ORDER], activeCompanyId: null },
     toasts: [],
     lastTickAt: now,
     tickCount: 0,
@@ -327,6 +328,9 @@ export function seed(mode: GameMode = "demo", now = Date.now()): GameState {
     feedback: {},
     lastDailyKey: saudiDayKey(now),
     dailyPostCount: 0,
+    botCompanies: seedBotCompanies(),
+    crown: { weekKey: "", holder: "" },
+    marketEvent: null,
   };
   seedFeed(s, now);
   return s;

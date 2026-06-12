@@ -4,6 +4,7 @@ import { personaById, pick, type Persona } from "../ai/personas";
 import { botById } from "../seed";
 import { itemPrice, marketItemDef } from "../selectors";
 import type { ChatThread, GameState } from "../types";
+import { mkMember } from "./company";
 import { addFeedPost, keyName } from "./feed";
 import { addNotif } from "./log";
 import { awardXp } from "./xp";
@@ -157,6 +158,17 @@ export function tickSocial(s: GameState, now: number, quiet = false): void {
         avatarId: bot.avatarId,
         invested: K,
       });
+      // clan roster: the new partner appears as a member with rank شريك
+      co.members.push(
+        mkMember({
+          name: bot.name,
+          avatarId: bot.avatarId,
+          rank: "partner",
+          botId: p.botId,
+          joinedAt: now,
+          contribution: K,
+        })
+      );
       // synergy bump: the partner's capital + network grows the whole pie
       co.valuation = Math.round((oldVal + K) * 1.08);
       co.events.unshift({

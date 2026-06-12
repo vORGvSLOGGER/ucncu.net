@@ -131,8 +131,59 @@ export interface Partner {
 export interface CompanyEvent {
   t: number;
   text: string;
-  kind: "founded" | "dividend" | "growth" | "drop" | "shares" | "upgrade" | "partner";
+  kind:
+    | "founded"
+    | "dividend"
+    | "growth"
+    | "drop"
+    | "shares"
+    | "upgrade"
+    | "partner"
+    | "salary"
+    | "contract"
+    | "deposit"
+    | "distribution"
+    | "verify"
+    | "resign"
+    | "hire"
+    | "fire";
 }
+
+/* ---------- company world (v3): members, contracts, verification ---------- */
+
+export type CompanyRank = "owner" | "founder" | "partner" | "employee" | "shareholder";
+
+export interface CompanyMember {
+  id: string;
+  botId?: string;
+  name: string;
+  avatarId: number;
+  rank: CompanyRank;
+  isPlayer?: boolean;
+  joinedAt: number;
+  /** UCN per dividend cycle — employees only */
+  salary?: number;
+  /** capital injected / value produced */
+  contribution: number;
+  missedSalaries?: number;
+}
+
+export interface CompanyContract {
+  id: string;
+  title: string;
+  sectorId: string;
+  cost: number;
+  reward: number;
+  risk: number; // 0..1 fail chance, reduced by employees
+  duration: number; // ms
+  startedAt?: number;
+  endsAt?: number;
+  status: "offer" | "active" | "done" | "failed";
+  expiresAt: number; // offer expiry
+  mega?: boolean;
+}
+
+export type VerificationStatus = "none" | "pending" | "verified" | "rejected";
 
 export interface Company {
   id: string;
@@ -146,8 +197,40 @@ export interface Company {
   dividendsPaid: number;
   events: CompanyEvent[];
   nextDividendAt: number;
-  /** 1 ناشئة · 2 نامية · 3 رائدة — boosts dividend yield */
+  /** 1 ناشئة · 2 نامية · 3 رائدة · 4 كبرى · 5 إمبراطورية */
   level: number;
+  /* --- v3 --- */
+  treasury: number;
+  fame: number;
+  members: CompanyMember[];
+  contracts: CompanyContract[]; // offers + active + recent history (capped)
+  verification: VerificationStatus;
+  verificationAt?: number;
+  autoDistribute: boolean;
+  payoutPct: number;
+}
+
+export interface BotCompany {
+  id: string;
+  name: string;
+  ownerBotId: string;
+  sectorId: string;
+  valuation: number;
+  history: number[];
+  level: number;
+  verified: boolean;
+  fame: number;
+}
+
+export interface MarketEvent {
+  id: string;
+  title: string;
+  desc: string;
+  keys: string[]; // affected price-book keys
+  sectorId?: string; // boosts matching contracts
+  mult: number; // extra drift per tick (signed)
+  endsAt: number;
+  kind: "boom" | "crash";
 }
 
 export interface TradePosition {
@@ -387,7 +470,11 @@ export type TxType =
   | "direct-sale"
   | "partner-capital"
   | "auction-sale"
-  | "upgrade";
+  | "upgrade"
+  | "salary"
+  | "contract"
+  | "treasury"
+  | "distribution";
 
 export interface Transaction {
   id: string;
@@ -423,7 +510,7 @@ export interface Player {
 }
 
 export interface GameState {
-  version: 2;
+  version: 3;
   mode: GameMode;
   player: Player;
   balances: Record<FiatCode, number>;
@@ -443,7 +530,7 @@ export interface GameState {
   achievements: { id: string; unlockedAt: number }[];
   notifications: AppNotification[];
   favoritePairs: string[];
-  settings: { exploreMode: boolean; navOrder: string[] };
+  settings: { exploreMode: boolean; navOrder: string[]; activeCompanyId: string | null };
   toasts: ToastMsg[];
   lastTickAt: number;
   tickCount: number;
@@ -461,6 +548,10 @@ export interface GameState {
   feedback: Record<string, { stars: number; text: string; t: number }>;
   lastDailyKey: string; // Saudi calendar day of last daily grant
   dailyPostCount: number;
+  /* --- v3: company world + الإدارة العليا --- */
+  botCompanies: BotCompany[];
+  crown: { weekKey: string; holder: string }; // "player" | botId | ""
+  marketEvent: MarketEvent | null;
 }
 
 /* ---------- actions ---------- */
@@ -516,4 +607,13 @@ export type Action =
   | { type: "INVITE_PARTNER"; botId: string; companyId: string }
   | { type: "RELIST_AUCTION"; itemDefId: string; startBid: number }
   | { type: "UPGRADE_COMPANY"; companyId: string }
-  | { type: "SUBMIT_FEEDBACK"; stars: number; text: string };
+  | { type: "SUBMIT_FEEDBACK"; stars: number; text: string }
+  /* --- v3: company context --- */
+  | { type: "SET_ACTIVE_COMPANY"; companyId: string }
+  | { type: "HIRE_EMPLOYEE"; companyId: string; botId: string }
+  | { type: "FIRE_EMPLOYEE"; companyId: string; memberId: string }
+  | { type: "ACCEPT_CONTRACT"; companyId: string; contractId: string }
+  | { type: "DEPOSIT_TREASURY"; companyId: string; amount: number }
+  | { type: "DISTRIBUTE_PROFITS"; companyId: string }
+  | { type: "SET_AUTO_DISTRIBUTE"; companyId: string; enabled: boolean; payoutPct?: number }
+  | { type: "REQUEST_VERIFICATION"; companyId: string };

@@ -116,6 +116,14 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     xp: 10,
   },
   {
+    id: "company-mode",
+    route: "/",
+    target: "nav-switch",
+    title: "وضع الشركة 🏢",
+    body: "هذا الزر يبدّلك إلى عالم الشركات: شريط تحكم خاص، بروفايل شركة كنظام الكلانات، منسوبون برواتب، عقود تملأ الخزينة، وتوب 10 للشركات. تبدأ فردًا… وتنتهي إمبراطورية. الزر نفسه يعيدك لوضع الفرد.",
+    xp: 15,
+  },
+  {
     id: "perks",
     route: "/profile",
     target: "perks-ladder",

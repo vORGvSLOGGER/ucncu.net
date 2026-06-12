@@ -13,7 +13,7 @@ import { Avatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
 import { LiveClock } from "../ui/LiveClock";
 
-function NotificationBell() {
+export function NotificationBell() {
   const game = useGame();
   const dispatch = useGameDispatch();
   const [open, setOpen] = useState(false);
@@ -141,6 +141,14 @@ export function Header() {
             <div className="flex items-center gap-1.5 text-sm font-bold text-ink">
               {game.player.name}
               <Icon name="star" size={12} className="text-gold" />
+              {game.crown?.holder === "player" && (
+                <span
+                  className="rounded-full border border-gold/60 bg-gold/15 px-1.5 py-0.5 text-[8px] font-extrabold text-gold"
+                  title="توّجتك الإدارة العليا أغنى أثرياء الأسبوع"
+                >
+                  المتوَّج 👑
+                </span>
+              )}
             </div>
             <div className="text-[10px] text-muted">{rankForLevel(game.player.level)}</div>
             <div className="mt-1 flex items-center gap-1.5" data-tour="hdr-xp">

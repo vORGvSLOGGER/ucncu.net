@@ -5,7 +5,7 @@ import type { BotStrategy } from "../types";
  * Bump PERSONAS_VERSION in a release to re-apply strategy/level tuning to
  * live saves without wiping evolved wealth.
  */
-export const PERSONAS_VERSION = 1;
+export const PERSONAS_VERSION = 2; // v2: event-aware trading + company world
 
 export interface Persona {
   botId: string;

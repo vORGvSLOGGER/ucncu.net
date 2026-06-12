@@ -1,16 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { FEATURE_LEVELS } from "@/lib/constants";
-import { NAV_ITEMS, navById, sanitizeNavOrder, type NavDef } from "@/lib/nav";
+import { COMPANY_NAV_ITEMS, NAV_ITEMS, navById, sanitizeNavOrder, type NavDef } from "@/lib/nav";
 import { useGame, useGameDispatch } from "@/lib/state/GameContext";
 import { Icon } from "../ui/Icon";
 import { Modal } from "../ui/Modal";
 
 const HOME = NAV_ITEMS.find((n) => n.id === "home")!;
 const PROFILE = NAV_ITEMS.find((n) => n.id === "profile")!;
+
+/** how many reorderable items show in the mobile bar (around home + المزيد + التبديل) */
+const BAR_SLOTS = 3;
 
 function NavIcon({
   item,
@@ -58,7 +61,7 @@ function CustomizeModal({ open, onClose }: { open: boolean; onClose: () => void 
   return (
     <Modal open={open} onClose={onClose} title="تخصيص الشريط السفلي ⚙️">
       <p className="mb-3 text-[11px] leading-5 text-muted">
-        رتب الأقسام بالأسهم — أول 4 أقسام تظهر في الشريط السفلي حول زر الرئيسية،
+        رتب الأقسام بالأسهم — أول {BAR_SLOTS} أقسام تظهر في الشريط السفلي حول زر الرئيسية،
         والبقية في قائمة «المزيد».
       </p>
       <div className="space-y-1.5">
@@ -69,7 +72,7 @@ function CustomizeModal({ open, onClose }: { open: boolean; onClose: () => void 
           const locked = gate ? game.player.level < gate.level : false;
           return (
             <div key={id}>
-              {idx === 4 && (
+              {idx === BAR_SLOTS && (
                 <div className="my-2 flex items-center gap-2 text-[9px] font-bold text-gold">
                   <span className="h-px flex-1 bg-gold/30" />
                   ما فوق هذا الخط يظهر في الشريط ↑
@@ -111,15 +114,106 @@ function CustomizeModal({ open, onClose }: { open: boolean; onClose: () => void 
   );
 }
 
+/** the context toggle living at the far left of both bars */
+function SwitchButton({ inCompany }: { inCompany: boolean }) {
+  const game = useGame();
+  const router = useRouter();
+  const hasCompany = game.companies.length > 0;
+
+  const go = () => {
+    if (inCompany) router.push("/");
+    else if (hasCompany) router.push("/company");
+    else router.push("/companies");
+  };
+
+  return (
+    <button
+      onClick={go}
+      data-tour="nav-switch"
+      className={`flex flex-col items-center gap-0.5 px-1.5 py-1 text-[10px] font-bold transition ${
+        inCompany ? "text-teal" : hasCompany ? "text-gold" : "text-muted"
+      }`}
+      aria-label={inCompany ? "وضع الفرد" : "وضع الشركة"}
+    >
+      <span
+        className={`relative grid h-7 w-7 place-items-center rounded-lg border ${
+          inCompany
+            ? "border-teal/60 bg-teal/10 glow-teal"
+            : hasCompany
+              ? "border-gold/60 bg-gold/10 glow-gold"
+              : "border-edge bg-card"
+        }`}
+      >
+        <Icon name={inCompany ? "user" : "briefcase"} size={15} />
+        {!inCompany && !hasCompany && (
+          <span className="absolute -left-1.5 -top-1.5 grid h-3.5 w-3.5 place-items-center rounded-full border border-gold/60 bg-bg text-gold">
+            <Icon name="lock" size={8} strokeWidth={2.4} />
+          </span>
+        )}
+      </span>
+      {inCompany ? "الفرد" : "شركتي"}
+    </button>
+  );
+}
+
+/* =================== company-context bar =================== */
+
+function CompanyBar() {
+  const pathname = usePathname();
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-teal/30 bg-bg/92 backdrop-blur-md">
+      <div className="mx-auto flex max-w-6xl items-center justify-around px-2 py-2">
+        {COMPANY_NAV_ITEMS.map((item) => {
+          const active = pathname === item.href;
+          if (item.id === "co-home") {
+            return (
+              <Link
+                key={item.id}
+                href={item.href}
+                className={`-mt-5 flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-2xl border ${
+                  active
+                    ? "border-teal/70 bg-gradient-to-b from-teal/25 to-cyan/10 text-teal glow-teal"
+                    : "border-edge bg-card text-muted"
+                }`}
+              >
+                <Icon name={item.icon} size={22} className={active ? "nav-active" : undefined} />
+                <span className="text-[8px] font-bold">الشركة</span>
+              </Link>
+            );
+          }
+          return (
+            <Link
+              key={item.id}
+              href={item.href}
+              className={`flex flex-col items-center gap-0.5 px-1.5 py-1 text-[10px] font-semibold transition ${
+                active ? "text-teal" : "text-muted hover:text-ink"
+              }`}
+            >
+              <Icon name={item.icon} size={19} className={active ? "nav-active" : undefined} />
+              {item.label}
+            </Link>
+          );
+        })}
+        <SwitchButton inCompany />
+      </div>
+    </nav>
+  );
+}
+
+/* =================== personal bar =================== */
+
 export function BottomNav() {
   const pathname = usePathname();
   const game = useGame();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [customizing, setCustomizing] = useState(false);
 
+  // "/companies" (personal portfolio) must NOT match the company context
+  if (pathname === "/company" || pathname.startsWith("/company/")) return <CompanyBar />;
+
   const order = sanitizeNavOrder(game.settings.navOrder);
-  const barItems = order.slice(0, 4).map((id) => navById(id)!).filter(Boolean);
-  const sheetItems = [...order.slice(4).map((id) => navById(id)!).filter(Boolean), PROFILE];
+  const barItems = order.slice(0, BAR_SLOTS).map((id) => navById(id)!).filter(Boolean);
+  const sheetItems = [...order.slice(BAR_SLOTS).map((id) => navById(id)!).filter(Boolean), PROFILE];
   const unreadChats = Object.values(game.chats).reduce((sum, t) => sum + t.unread, 0);
 
   const isLocked = (item: NavDef) => {
@@ -201,7 +295,7 @@ export function BottomNav() {
           {sideLink(barItems[0], true)}
           {sideLink(barItems[1], true)}
 
-          {/* centered home */}
+          {/* centered home — لوحة التحكم العامة */}
           <Link
             href="/"
             className={`-mt-5 flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-2xl border ${
@@ -215,10 +309,9 @@ export function BottomNav() {
           </Link>
 
           {sideLink(barItems[2], true)}
-          {sideLink(barItems[3], true)}
 
           {/* the rest — desktop only */}
-          {order.slice(4).map((id) => {
+          {order.slice(BAR_SLOTS).map((id) => {
             const item = navById(id);
             return item ? sideLink(item, false) : null;
           })}
@@ -239,6 +332,9 @@ export function BottomNav() {
             <Icon name="user" size={19} className={pathname === "/profile" ? "nav-active" : undefined} />
             البروفايل
           </Link>
+
+          {/* far-left: switch into company mode */}
+          <SwitchButton inCompany={false} />
         </div>
       </nav>
     </>

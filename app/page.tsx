@@ -10,8 +10,10 @@ import { PageTitle } from "@/components/ui/PageTitle";
 import { StatCard } from "@/components/ui/StatCard";
 import { TabSwitcher } from "@/components/ui/TabSwitcher";
 import { CRYPTO_CODES, CRYPTO_META, pk } from "@/lib/constants";
-import { fmtClock, fmtCompact, fmtPct, fmtSigned } from "@/lib/format";
-import { GAME_EVENTS } from "@/lib/seed";
+import { companyLevel } from "@/lib/companyPerks";
+import { companyRanking } from "@/lib/engine/company";
+import { fmtClock, fmtCompact, fmtInt, fmtPct, fmtSigned } from "@/lib/format";
+import { GAME_EVENTS, SECTORS } from "@/lib/seed";
 import { breakdown, marketItemDef, netWorth } from "@/lib/selectors";
 import { useGame } from "@/lib/state/GameContext";
 import type { TxType } from "@/lib/types";
@@ -49,6 +51,91 @@ const LOG_CATS: {
 
 function catForTx(type: TxType) {
   return LOG_CATS.find((c) => c.types.includes(type)) ?? LOG_CATS[0];
+}
+
+/** the home page is the GLOBAL dashboard: individual + company empire */
+function EmpireSection() {
+  const game = useGame();
+  if (game.companies.length === 0) {
+    return (
+      <Card className="flex flex-wrap items-center justify-between gap-3 border-teal/30 p-4">
+        <div className="flex items-center gap-3">
+          <span className="grid h-11 w-11 place-items-center rounded-xl border border-teal/40 bg-teal/10 text-teal">
+            <Icon name="briefcase" size={22} />
+          </span>
+          <div>
+            <div className="text-sm font-bold text-ink">إمبراطوريتك تبدأ بشركة واحدة 🏢</div>
+            <div className="text-[11px] text-muted">
+              أسس شركة لتفتح وضع الشركة: منسوبون، عقود، خزينة، وتوب 10 خاص
+            </div>
+          </div>
+        </div>
+        <Link href="/companies" className="btn-teal px-5 py-2 text-xs">
+          أسس شركتك ←
+        </Link>
+      </Card>
+    );
+  }
+
+  const totalTreasury = game.companies.reduce((sum, c) => sum + c.treasury, 0);
+  const ranking = companyRanking(game, "valuation");
+  const bestRank = ranking.findIndex((r) => r.mine) + 1;
+  const top = [...game.companies].sort((a, z) => z.valuation - a.valuation)[0];
+  const activeContracts = game.companies.reduce(
+    (sum, c) => sum + c.contracts.filter((k) => k.status === "active").length,
+    0
+  );
+
+  return (
+    <Card glow="teal" className="p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <SectionTitle
+          icon="briefcase"
+          title="إمبراطوريتك"
+          sub="موجز شركاتك — التفاصيل والتحكم في وضع الشركة"
+        />
+        <Link href="/company" className="btn-teal shrink-0 px-4 py-2 text-xs">
+          دخول وضع الشركة 🏢
+        </Link>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="rounded-xl border border-edge bg-card2 p-3 text-center">
+          <div className="text-lg font-extrabold text-ink">{game.companies.length}</div>
+          <div className="text-[9px] text-muted">شركات تملكها</div>
+        </div>
+        <div className="rounded-xl border border-edge bg-card2 p-3 text-center">
+          <div className="text-lg font-extrabold text-teal">{fmtCompact(totalTreasury)}</div>
+          <div className="text-[9px] text-muted">إجمالي الخزائن (UCN)</div>
+        </div>
+        <div className="rounded-xl border border-edge bg-card2 p-3 text-center">
+          <div className="text-lg font-extrabold text-gold">
+            {bestRank > 0 ? `#${bestRank}` : "—"}
+          </div>
+          <div className="text-[9px] text-muted">أفضل ترتيب في توب 10</div>
+        </div>
+        <div className="rounded-xl border border-edge bg-card2 p-3 text-center">
+          <div className="text-lg font-extrabold text-violet">{activeContracts}</div>
+          <div className="text-[9px] text-muted">عقود قيد التنفيذ</div>
+        </div>
+      </div>
+      {top && (
+        <div className="mt-2.5 flex items-center gap-2.5 rounded-xl border border-edge bg-card2 px-3 py-2 text-[11px]">
+          <Icon name={SECTORS.find((x) => x.id === top.sectorId)?.icon ?? "briefcase"} size={15} className="text-teal" />
+          <span className="font-bold text-ink">{top.name}</span>
+          {top.verification === "verified" && (
+            <span className="grid h-3.5 w-3.5 place-items-center rounded-full bg-gold text-bg">
+              <Icon name="check" size={8} strokeWidth={3} />
+            </span>
+          )}
+          <span className="text-muted">«{companyLevel(top.level).name}»</span>
+          <span className="ms-auto text-muted">
+            الخزينة <b className="text-teal">{fmtInt(top.treasury)}</b> · الشهرة{" "}
+            <b className="text-violet">{fmtInt(top.fame)}</b>
+          </span>
+        </div>
+      )}
+    </Card>
+  );
 }
 
 function ActivityLog() {
@@ -267,6 +354,11 @@ export default function HomePage() {
             ))}
           </div>
         </Card>
+      </div>
+
+      {/* company empire summary — the home stays the global dashboard */}
+      <div className="mt-4">
+        <EmpireSection />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">

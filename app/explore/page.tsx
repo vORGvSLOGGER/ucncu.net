@@ -29,7 +29,7 @@ const KIND_META: Record<FeedKind, { label: string; cls: string }> = {
 
 function avatarIdFor(game: ReturnType<typeof useGame>, authorId: string): number {
   if (authorId === "player") return game.player.avatarId;
-  if (authorId === "system") return 0;
+  if (authorId === "system" || authorId === "admin") return 0;
   return botById(authorId).avatarId;
 }
 
@@ -87,9 +87,20 @@ function FeedTab() {
                 <Avatar name={name} avatarId={avatarIdFor(game, post.authorId)} size={36} />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <b className={`text-xs ${post.authorId === "player" ? "text-gold" : "text-ink"}`}>
+                    <b
+                      className={`text-xs ${
+                        post.authorId === "player" || post.authorId === "admin"
+                          ? "text-gold"
+                          : "text-ink"
+                      }`}
+                    >
                       {name}
                     </b>
+                    {post.authorId === "admin" && (
+                      <span className="rounded-full border border-gold/60 bg-gold/15 px-2 py-0.5 text-[8px] font-extrabold text-gold">
+                        رسمي 🏛️
+                      </span>
+                    )}
                     <span className={`rounded-full border px-2 py-0.5 text-[8px] font-bold ${meta.cls}`}>
                       {meta.label}
                     </span>

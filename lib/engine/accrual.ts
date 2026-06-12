@@ -5,11 +5,14 @@ import {
   INSTALLMENT_PERIOD_MS,
   RENT_PERIOD_MS,
 } from "../constants";
+import { companyLevel, VERIFIED_PROFIT_BOOST } from "../companyPerks";
 import { fmtInt } from "../format";
 import { BORROWER_OFFERS, botById } from "../seed";
 import { insolvent, propertyDef } from "../selectors";
 import type { GameState } from "../types";
 import { enterBankruptcy } from "./bankruptcy";
+import { distributeTreasury, pushCompanyEvent } from "./company";
+import { addFeedPost } from "./feed";
 import { addNotif, addTx } from "./log";
 import { awardXp, checkAchievements } from "./xp";
 
@@ -59,42 +62,73 @@ export function processAccruals(
     }
   }
 
-  /* ---- company dividends + valuation walk ---- */
+  /* ---- company cycle: gross profit → salaries → treasury (→ auto payout) ---- */
   const maxDivIter = Math.ceil(CATCHUP_MAX_MS / DIVIDEND_PERIOD_MS);
   for (const c of s.companies) {
-    let paid = 0;
+    const lv = companyLevel(c.level);
+    let grossTotal = 0;
+    let salariesTotal = 0;
     let i = 0;
     while (c.nextDividendAt <= now && i < maxDivIter) {
-      // company level (ناشئة/نامية/رائدة) boosts the dividend yield
-      const levelBoost = 1 + 0.25 * ((c.level || 1) - 1);
-      const dividend = Math.round(
-        c.valuation * DIVIDEND_YIELD * levelBoost * (c.ownershipPct / 100)
+      const employees = c.members.filter((m) => m.rank === "employee");
+      const verifiedBoost = c.verification === "verified" ? VERIFIED_PROFIT_BOOST : 1;
+      const gross = Math.round(
+        c.valuation * DIVIDEND_YIELD * lv.profitBoost * (1 + 0.08 * employees.length) * verifiedBoost
       );
-      paid += dividend;
+      c.treasury += gross;
+      grossTotal += gross;
+      // treasury interest (كبرى+)
+      if (lv.treasuryInterest > 0 && c.treasury > 0) {
+        c.treasury += Math.round(c.treasury * lv.treasuryInterest);
+      }
+      // salaries auto-paid from the treasury; broke treasury breeds resignations
+      for (let mIdx = c.members.length - 1; mIdx >= 0; mIdx--) {
+        const m = c.members[mIdx];
+        if (m.rank !== "employee" || !m.salary) continue;
+        if (c.treasury >= m.salary) {
+          c.treasury -= m.salary;
+          salariesTotal += m.salary;
+          m.contribution += Math.round(m.salary * 0.4);
+          m.missedSalaries = 0;
+        } else {
+          m.missedSalaries = (m.missedSalaries ?? 0) + 1;
+          if (m.missedSalaries >= 3) {
+            c.members.splice(mIdx, 1);
+            c.fame = Math.max(0, c.fame - 15);
+            pushCompanyEvent(c, "resign", `${m.name} استقال بعد تأخر راتبه 3 دورات`, now);
+            if (!quiet && m.botId) {
+              addNotif(s, `استقالة في ${c.name} 📤`, `${m.name} ترك الشركة بسبب تأخر الرواتب — مول الخزينة!`, "warning", now);
+              addFeedPost(s, m.botId, "user", `قدمت استقالتي من ${c.name}… الكفاءات لا تنتظر رواتب متأخرة ✌️`, now);
+            }
+          }
+        }
+      }
+      // valuation walk (unchanged)
       const move = 1 + (Math.random() * 0.05 - 0.018);
       c.valuation = Math.max(10_000, Math.round(c.valuation * move));
       c.history.push(c.valuation);
       if (c.history.length > 48) c.history.shift();
       if (move > 1.02) {
-        c.events.unshift({ t: now, kind: "growth", text: "نمو قوي في تقييم الشركة" });
+        pushCompanyEvent(c, "growth", "نمو قوي في تقييم الشركة", now);
       } else if (move < 0.99) {
-        c.events.unshift({ t: now, kind: "drop", text: "تراجع طفيف في التقييم" });
+        pushCompanyEvent(c, "drop", "تراجع طفيف في التقييم", now);
+      }
+      // auto distribution (نامية+ unlocks it; نسبة قابلة للضبط من رائدة+)
+      if (c.autoDistribute && lv.autoDistribute) {
+        const pct = lv.setPayout ? c.payoutPct : 50;
+        summary.dividends += distributeTreasury(s, c, pct, now, { quiet });
       }
       c.nextDividendAt += DIVIDEND_PERIOD_MS;
       i++;
     }
     if (c.nextDividendAt <= now) c.nextDividendAt = now + DIVIDEND_PERIOD_MS;
-    if (paid > 0) {
-      s.balances.UCN += paid;
-      c.dividendsPaid += paid;
-      summary.dividends += paid;
-      c.events.unshift({
-        t: now,
-        kind: "dividend",
-        text: `توزيع أرباح ${fmtInt(paid)} UCN`,
-      });
-      if (c.events.length > 20) c.events.length = 20;
-      addTx(s, "dividend", `أرباح شركة ${c.name}`, paid, "UCN", now);
+    if (grossTotal > 0) {
+      pushCompanyEvent(
+        c,
+        "dividend",
+        `إيراد دورة ${fmtInt(grossTotal)} UCN${salariesTotal > 0 ? ` — رواتب ${fmtInt(salariesTotal)} UCN` : ""} ← الخزينة`,
+        now
+      );
     }
   }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Card, SectionTitle } from "@/components/ui/Card";
 import { AmountInput } from "@/components/ui/AmountInput";
@@ -12,36 +13,42 @@ import { Modal } from "@/components/ui/Modal";
 import { PageTitle } from "@/components/ui/PageTitle";
 import { ProgressRing } from "@/components/ui/ProgressRing";
 import { StatCard } from "@/components/ui/StatCard";
+import { companyLevel, MAX_COMPANY_LEVEL } from "@/lib/companyPerks";
 import { fmtClock, fmtCompact, fmtInt, fmtPct } from "@/lib/format";
 import { BOTS, botById, SECTORS } from "@/lib/seed";
 import { useGame, useGameDispatch } from "@/lib/state/GameContext";
 import type { Company } from "@/lib/types";
 
-const LEVEL_LABELS = ["", "ناشئة", "نامية", "رائدة"];
-
 function UpgradeModal({ company, onClose }: { company: Company; onClose: () => void }) {
   const game = useGame();
   const dispatch = useGameDispatch();
   const level = company.level || 1;
-  const cost = Math.round(company.valuation * (level === 1 ? 0.3 : 0.5));
-  const nextLabel = LEVEL_LABELS[level + 1];
+  const next = companyLevel(level + 1);
+  const cost = Math.round(company.valuation * next.costPct);
   const can = game.balances.UCN >= cost;
 
   return (
     <Modal open onClose={onClose} title={`ترقية ${company.name} 🏆`}>
       <div className="mb-3 flex items-center justify-center gap-3 text-sm font-extrabold">
-        <span className="text-muted">{LEVEL_LABELS[level]}</span>
+        <span className="text-muted">{companyLevel(level).name}</span>
         <Icon name="arrow-up" size={16} className="rotate-90 text-gold" />
-        <span className="text-gold">{nextLabel}</span>
+        <span className="text-gold">{next.name}</span>
+      </div>
+      <div className="mb-3 rounded-xl border border-gold/30 bg-gold/8 p-3">
+        <div className="mb-1.5 text-[10px] font-bold text-gold">ميزات مستوى «{next.name}»</div>
+        <ul className="space-y-1 text-[11px] leading-5 text-ink">
+          {next.perks.map((p) => (
+            <li key={p} className="flex items-start gap-1.5">
+              <Icon name="check" size={11} className="mt-0.5 shrink-0 text-up" />
+              {p}
+            </li>
+          ))}
+        </ul>
       </div>
       <div className="space-y-2 text-[11px] leading-5 text-muted">
         <div className="flex items-center justify-between rounded-xl border border-edge bg-card2 p-3">
           <span>تكلفة الترقية (تُضخ في الشركة)</span>
           <b className="text-ink">{fmtInt(cost)} UCN</b>
-        </div>
-        <div className="flex items-center justify-between rounded-xl border border-edge bg-card2 p-3">
-          <span>عائد التوزيعات</span>
-          <b className="text-up">+25% لكل مستوى</b>
         </div>
         <div className="flex items-center justify-between rounded-xl border border-edge bg-card2 p-3">
           <span>التقييم بعد الترقية</span>
@@ -261,6 +268,8 @@ function SellSharesModal({ company, onClose }: { company: Company; onClose: () =
 
 export default function CompaniesPage() {
   const game = useGame();
+  const dispatch = useGameDispatch();
+  const router = useRouter();
   const [foundOpen, setFoundOpen] = useState(false);
   const [sellCompany, setSellCompany] = useState<Company | null>(null);
   const [upgradeCompany, setUpgradeCompany] = useState<Company | null>(null);
@@ -353,8 +362,13 @@ export default function CompaniesPage() {
                   <div>
                     <div className="flex items-center gap-2 text-sm font-extrabold text-ink">
                       {c.name}
-                      <span className="flex items-center gap-0.5" title={LEVEL_LABELS[c.level || 1]}>
-                        {[1, 2, 3].map((n) => (
+                      {c.verification === "verified" && (
+                        <span className="grid h-4 w-4 place-items-center rounded-full bg-gold text-bg" title="موثقة من الإدارة العليا">
+                          <Icon name="check" size={10} strokeWidth={3} />
+                        </span>
+                      )}
+                      <span className="flex items-center gap-0.5" title={companyLevel(c.level || 1).name}>
+                        {[1, 2, 3, 4, 5].map((n) => (
                           <Icon
                             key={n}
                             name="star"
@@ -366,9 +380,11 @@ export default function CompaniesPage() {
                       </span>
                     </div>
                     <div className="text-[10px] text-muted">
-                      {sector?.name} · شركة {LEVEL_LABELS[c.level || 1]}
+                      {sector?.name} · شركة {companyLevel(c.level || 1).name}
                       {(c.level || 1) > 1 && (
-                        <span className="text-up"> · توزيعات +{((c.level || 1) - 1) * 25}%</span>
+                        <span className="text-up">
+                          {" "}· أرباح ×{companyLevel(c.level || 1).profitBoost}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -447,7 +463,16 @@ export default function CompaniesPage() {
                   أرباح موزعة: <b className="text-up">+{fmtInt(c.dividendsPaid)} UCN</b>
                 </span>
                 <div className="flex gap-1.5">
-                  {(c.level || 1) < 3 && (
+                  <button
+                    onClick={() => {
+                      dispatch({ type: "SET_ACTIVE_COMPANY", companyId: c.id });
+                      router.push("/company");
+                    }}
+                    className="btn-teal px-3.5 py-1.5 text-[11px]"
+                  >
+                    🏢 إدارة
+                  </button>
+                  {(c.level || 1) < MAX_COMPANY_LEVEL && (
                     <button
                       onClick={() => setUpgradeCompany(c)}
                       className="btn-gold px-3.5 py-1.5 text-[11px]"
@@ -457,7 +482,7 @@ export default function CompaniesPage() {
                   )}
                   <button
                     onClick={() => setInviteCompany(c)}
-                    className="btn-teal px-3.5 py-1.5 text-[11px]"
+                    className="btn-ghost px-3.5 py-1.5 text-[11px]"
                   >
                     🤝 شريك
                   </button>

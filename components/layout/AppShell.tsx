@@ -1,11 +1,13 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 import { useGameDispatch, useGameMode, useMaybeGame } from "@/lib/state/GameContext";
 import { TutorialOverlay } from "../tutorial/TutorialOverlay";
 import { Modal } from "../ui/Modal";
 import { BankruptcyBanner } from "./BankruptcyBanner";
 import { BottomNav } from "./BottomNav";
+import { CompanyHeader } from "./CompanyHeader";
 import { GameOverScreen } from "./GameOverScreen";
 import { Header } from "./Header";
 import { HydrationSplash } from "./HydrationSplash";
@@ -106,6 +108,7 @@ function TutorialInvite() {
 export function AppShell({ children }: { children: ReactNode }) {
   const game = useMaybeGame();
   const { mode } = useGameMode();
+  const pathname = usePathname();
   useRipple();
 
   if (mode === undefined) return <HydrationSplash />;
@@ -113,9 +116,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (game === null) return <HydrationSplash />;
   if (game.bankruptcy.status === "gameover") return <GameOverScreen />;
 
+  // careful: "/companies" (personal portfolio) also starts with "/company"
+  const inCompany = pathname === "/company" || pathname.startsWith("/company/");
+
   return (
     <div className="mx-auto max-w-6xl px-3">
-      <Header />
+      {inCompany ? <CompanyHeader /> : <Header />}
       <BankruptcyBanner />
       <main className="pb-28 animate-page-in">{children}</main>
       <BottomNav />

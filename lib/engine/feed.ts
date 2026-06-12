@@ -19,6 +19,7 @@ export function addFeedPost(
 export function authorName(s: GameState, authorId: string): string {
   if (authorId === "player") return s.player.name;
   if (authorId === "system") return "إدارة UCNCU";
+  if (authorId === "admin") return "الإدارة العليا ★";
   return BOTS.find((b) => b.id === authorId)?.name ?? "متداول";
 }
 

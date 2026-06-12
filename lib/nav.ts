@@ -42,6 +42,18 @@ export const DEFAULT_NAV_ORDER: string[] = [
   "realestate",
 ];
 
+/**
+ * Company-context bottom bar (وضع الشركة) — clan-style workspace.
+ * Layout: [members, contracts, CO-HOME (center), finance, rank] + switch.
+ */
+export const COMPANY_NAV_ITEMS: NavDef[] = [
+  { id: "co-members", href: "/company/members", label: "الأعضاء", icon: "users" },
+  { id: "co-contracts", href: "/company/contracts", label: "العقود", icon: "scroll" },
+  { id: "co-home", href: "/company", label: "لوحة الشركة", icon: "briefcase" },
+  { id: "co-finance", href: "/company/finance", label: "المالية", icon: "wallet" },
+  { id: "co-rank", href: "/company/rank", label: "الترتيب", icon: "trophy" },
+];
+
 export function navById(id: string): NavDef | undefined {
   return NAV_ITEMS.find((n) => n.id === id);
 }

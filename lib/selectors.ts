@@ -72,7 +72,8 @@ export function breakdown(s: GameState): Breakdown {
   let properties = 0;
   for (const p of s.properties) properties += propertyValue(s, p.defId);
   let companies = 0;
-  for (const c of s.companies) companies += (c.valuation * c.ownershipPct) / 100;
+  for (const c of s.companies)
+    companies += ((c.valuation + (c.treasury ?? 0)) * c.ownershipPct) / 100;
   let trading = 0;
   for (const p of s.positions) trading += p.entry * p.qty + unrealizedPnl(s, p);
   let lends = 0;

@@ -25,6 +25,7 @@ import {
   maxCompanies,
   maxLoans,
 } from "../perks";
+import { companyLevel, MAX_COMPANY_LEVEL } from "../companyPerks";
 import {
   BORROWER_OFFERS,
   botById,
@@ -46,9 +47,18 @@ import {
 import { TUTORIAL_STEPS } from "../tutorial/steps";
 import type { Action, GameState } from "../types";
 import { processAccruals } from "./accrual";
+import { tickAdmin } from "./admin";
 import { tickAuctions } from "./auction";
 import { tickBankruptcy } from "./bankruptcy";
 import { retuneBots, tickBots } from "./bots";
+import {
+  companyEmployees,
+  distributeTreasury,
+  mkMember,
+  pushCompanyEvent,
+  tickBotCompanies,
+  tickCompanies,
+} from "./company";
 import { addFeedPost, tickFeed } from "./feed";
 import { addNotif, addToast, addTx } from "./log";
 import { ensureThread, pushChat, returnOfferItems, tickSocial } from "./social";
@@ -84,6 +94,9 @@ export function gameReducer(state: GameState, action: Action): GameState {
             action.now
           );
         }
+        tickCompanies(h, action.now, true);
+        tickBotCompanies(h, action.now, ticks, true);
+        tickAdmin(h, action.now, ticks);
         tickBankruptcy(h, action.now, ticks);
         tickSocial(h, action.now, true);
         tickAuctions(h, action.now);
@@ -101,6 +114,9 @@ export function gameReducer(state: GameState, action: Action): GameState {
       tickBots(s, action.now);
       tickAuctions(s, action.now);
       processAccruals(s, action.now);
+      tickCompanies(s, action.now);
+      tickBotCompanies(s, action.now);
+      tickAdmin(s, action.now);
       tickBankruptcy(s, action.now);
       tickSocial(s, action.now);
       tickFeed(s, action.now);
@@ -109,6 +125,9 @@ export function gameReducer(state: GameState, action: Action): GameState {
       if (dayKey !== s.lastDailyKey) {
         s.lastDailyKey = dayKey;
         s.dailyPostCount = 0;
+        // fame fades 1% daily — stay active to stay famous
+        for (const c of s.companies) c.fame = Math.round(c.fame * 0.99);
+        for (const bc of s.botCompanies) bc.fame = Math.round(bc.fame * 0.99);
         const bonus = dailyBonus(s.player.level);
         if (bonus > 0) {
           s.balances.UCN += bonus;
@@ -444,8 +463,33 @@ export function gameReducer(state: GameState, action: Action): GameState {
       const history: number[] = [];
       for (let i = 8; i > 0; i--) history.push(Math.round(valuation * (0.94 + 0.06 * (8 - i) / 8)));
       history.push(valuation);
+      // clan roster: player = مالك, founding partner = مؤسس
+      const members = [
+        mkMember({
+          name: s.player.name,
+          avatarId: s.player.avatarId,
+          rank: "owner",
+          isPlayer: true,
+          joinedAt: now,
+          contribution: action.capital,
+        }),
+      ];
+      if (action.partnerBotId && partnerPct) {
+        const bot = botById(action.partnerBotId);
+        members.push(
+          mkMember({
+            name: bot.name,
+            avatarId: bot.avatarId,
+            rank: "founder",
+            botId: bot.id,
+            joinedAt: now,
+            contribution: partnerInvest,
+          })
+        );
+      }
+      const companyId = uid("co");
       s.companies.unshift({
-        id: uid("co"),
+        id: companyId,
         name,
         sectorId: action.sectorId,
         foundedAt: now,
@@ -457,7 +501,15 @@ export function gameReducer(state: GameState, action: Action): GameState {
         events: [{ t: now, kind: "founded", text: `تأسست الشركة برأس مال ${fmtInt(totalCapital)} UCN` }],
         nextDividendAt: now + DIVIDEND_PERIOD_MS,
         level: 1,
+        treasury: Math.round(totalCapital * 0.15),
+        fame: Math.round(valuation / 10_000),
+        members,
+        contracts: [],
+        verification: "none",
+        autoDistribute: false,
+        payoutPct: 50,
       });
+      if (!s.settings.activeCompanyId) s.settings.activeCompanyId = companyId;
       addTx(s, "company", `تأسيس شركة ${name}`, -action.capital, "UCN", now);
       addNotif(s, "شركة جديدة 🚀", `${name} انطلقت بتقييم ${fmtInt(valuation)} UCN`, "gold", now);
       addFeedPost(s, "player", "milestone", `أسس ${s.player.name} شركة ${name} في قطاع ${SECTORS.find((x) => x.id === action.sectorId)?.name ?? ""} 🚀`, now);
@@ -478,10 +530,17 @@ export function gameReducer(state: GameState, action: Action): GameState {
       const ext = co.partners.find((p) => p.name === "مستثمرون خارجيون");
       if (ext) ext.pct += pct;
       else co.partners.push({ name: "مستثمرون خارجيون", pct, invested: proceeds });
+      if (!co.members.some((m) => m.rank === "shareholder" && m.name === "مستثمرون خارجيون")) {
+        co.members.push(
+          mkMember({ name: "مستثمرون خارجيون", avatarId: 11, rank: "shareholder", joinedAt: now, contribution: proceeds })
+        );
+      }
       co.events.unshift({ t: now, kind: "shares", text: `بيع حصة ${pct}% مقابل ${fmtInt(proceeds)} UCN` });
       addTx(s, "shares-sale", `بيع ${pct}% من ${co.name}`, proceeds, "UCN", now);
       if (co.ownershipPct < 1) {
         s.companies = s.companies.filter((c) => c.id !== co.id);
+        if (s.settings.activeCompanyId === co.id)
+          s.settings.activeCompanyId = s.companies[0]?.id ?? null;
         addNotif(s, "خروج كامل", `تخارجت بالكامل من شركة ${co.name}`, "info", now);
       }
       awardXp(s, 20);
@@ -798,18 +857,162 @@ export function gameReducer(state: GameState, action: Action): GameState {
     case "UPGRADE_COMPANY": {
       const co = s.companies.find((c) => c.id === action.companyId);
       if (!co) return s;
-      if (co.level >= 3) return fail(s, "شركتك في أعلى مستوى بالفعل");
-      const cost = Math.round(co.valuation * (co.level === 1 ? 0.3 : 0.5));
+      if (co.level >= MAX_COMPANY_LEVEL) return fail(s, "شركتك إمبراطورية بالفعل — القمة!");
+      const next = companyLevel(co.level + 1);
+      const cost = Math.round(co.valuation * next.costPct);
       if (s.balances.UCN < cost) return fail(s, `الترقية تحتاج ${fmtInt(cost)} UCN`);
       s.balances.UCN -= cost;
       co.level += 1;
       co.valuation = Math.round((co.valuation + cost) * 1.05);
-      const label = co.level === 2 ? "نامية" : "رائدة";
-      co.events.unshift({ t: now, kind: "upgrade", text: `ترقية الشركة إلى «${label}» — التوزيعات ارتفعت` });
-      if (co.events.length > 20) co.events.length = 20;
-      addTx(s, "upgrade", `ترقية ${co.name} إلى «${label}»`, -cost, "UCN", now);
-      addNotif(s, `شركة ${label} 🏆`, `${co.name} ارتقت — توزيعات أرباح أعلى وتقييم ${fmtInt(co.valuation)} UCN`, "gold", now);
-      awardXp(s, 40);
+      co.fame += 100 * co.level;
+      pushCompanyEvent(co, "upgrade", `ترقية الشركة إلى «${next.name}» — ${next.perks[0]}`, now);
+      addTx(s, "upgrade", `ترقية ${co.name} إلى «${next.name}»`, -cost, "UCN", now);
+      addNotif(s, `شركة ${next.name} 🏆`, `${co.name} ارتقت — ${next.perks.join(" · ")}`, "gold", now);
+      if (co.level >= 4)
+        addFeedPost(s, "player", "milestone", `شركة ${co.name} تصبح «${next.name}» 🏛️ — ${s.player.name} يبني إمبراطوريته`, now);
+      awardXp(s, 40 + co.level * 10);
+      return s;
+    }
+
+    /* ================= company context (وضع الشركة) ================= */
+
+    case "SET_ACTIVE_COMPANY": {
+      if (s.companies.some((c) => c.id === action.companyId))
+        s.settings.activeCompanyId = action.companyId;
+      return s;
+    }
+
+    case "HIRE_EMPLOYEE": {
+      const co = s.companies.find((c) => c.id === action.companyId);
+      if (!co) return s;
+      const bot = botById(action.botId);
+      const liveBot = s.bots[action.botId];
+      if (co.members.some((m) => m.botId === action.botId))
+        return fail(s, `${bot.name} عضو في ${co.name} بالفعل`);
+      const lv = companyLevel(co.level);
+      if (companyEmployees(co).length >= lv.employees)
+        return fail(s, `حد المنسوبين في مستوى «${lv.name}» هو ${lv.employees} — رقِّ الشركة`);
+      const friendDiscount = s.friends.includes(action.botId) ? 0.9 : 1;
+      const salary = Math.max(
+        500,
+        Math.round(co.valuation * (0.005 + ((liveBot?.level ?? 10) / 100) * 0.01) * friendDiscount)
+      );
+      co.members.push(
+        mkMember({
+          name: bot.name,
+          avatarId: bot.avatarId,
+          rank: "employee",
+          botId: action.botId,
+          joinedAt: now,
+          salary,
+        })
+      );
+      co.fame += 10;
+      pushCompanyEvent(co, "hire", `انضم ${bot.name} منسوبًا براتب ${fmtInt(salary)} UCN/دورة`, now);
+      addNotif(s, `موظف جديد في ${co.name} 💼`, `${bot.name} انضم براتب ${fmtInt(salary)} UCN كل دورة — يرفع الإيراد ويخفض مخاطر العقود`, "success", now);
+      if (Math.random() < 0.6)
+        addFeedPost(s, action.botId, "user", `يسعدني الانضمام لفريق ${co.name} 💼 — مشاريع كبيرة قادمة`, now);
+      awardXp(s, 15);
+      return s;
+    }
+
+    case "FIRE_EMPLOYEE": {
+      const co = s.companies.find((c) => c.id === action.companyId);
+      if (!co) return s;
+      const idx = co.members.findIndex((m) => m.id === action.memberId && m.rank === "employee");
+      if (idx === -1) return s;
+      const [m] = co.members.splice(idx, 1);
+      co.fame = Math.max(0, co.fame - 10);
+      pushCompanyEvent(co, "fire", `أُنهيت خدمات ${m.name}`, now);
+      if (m.botId && Math.random() < 0.5)
+        addFeedPost(s, m.botId, "user", `انتهت رحلتي مع ${co.name}… كل تجربة تعلمك شيئًا 🤷`, now);
+      return s;
+    }
+
+    case "ACCEPT_CONTRACT": {
+      const co = s.companies.find((c) => c.id === action.companyId);
+      if (!co) return s;
+      const k = co.contracts.find((x) => x.id === action.contractId);
+      if (!k || k.status !== "offer" || k.expiresAt <= now)
+        return fail(s, "انتهى هذا العرض — انتظر عروضًا جديدة");
+      const lv = companyLevel(co.level);
+      const active = co.contracts.filter((x) => x.status === "active").length;
+      if (active >= lv.contracts)
+        return fail(s, `حد العقود النشطة في «${lv.name}» هو ${lv.contracts} — رقِّ الشركة`);
+      const cost = Math.round(k.cost * (1 - lv.contractDiscount));
+      if (co.treasury < cost)
+        return fail(s, `خزينة الشركة لا تكفي (${fmtInt(cost)} UCN) — أودع فيها من رصيدك`);
+      co.treasury -= cost;
+      k.cost = cost;
+      k.status = "active";
+      k.startedAt = now;
+      k.endsAt = now + k.duration;
+      pushCompanyEvent(co, "contract", `بدء تنفيذ «${k.title}» بتكلفة ${fmtInt(cost)} UCN`, now);
+      awardXp(s, 10);
+      return s;
+    }
+
+    case "DEPOSIT_TREASURY": {
+      const co = s.companies.find((c) => c.id === action.companyId);
+      if (!co) return s;
+      const amount = Math.round(action.amount);
+      if (amount <= 0) return s;
+      if (s.balances.UCN < amount) return fail(s, "رصيدك الشخصي غير كافٍ للإيداع");
+      s.balances.UCN -= amount;
+      co.treasury += amount;
+      const me = co.members.find((m) => m.isPlayer);
+      if (me) me.contribution += amount;
+      addTx(s, "treasury", `إيداع في خزينة ${co.name}`, -amount, "UCN", now);
+      pushCompanyEvent(co, "deposit", `أودع ${s.player.name} مبلغ ${fmtInt(amount)} UCN في الخزينة`, now);
+      return s;
+    }
+
+    case "DISTRIBUTE_PROFITS": {
+      const co = s.companies.find((c) => c.id === action.companyId);
+      if (!co) return s;
+      // keep a two-cycle salary reserve so the team doesn't walk out
+      const reserve = companyEmployees(co).reduce((sum, m) => sum + (m.salary ?? 0), 0) * 2;
+      const distributable = Math.max(0, co.treasury - reserve);
+      if (distributable < 1)
+        return fail(s, reserve > 0 ? "الخزينة بالكاد تغطي احتياطي الرواتب" : "الخزينة فارغة");
+      const before = co.treasury;
+      co.treasury = distributable; // distribute from the distributable pool only
+      const playerShare = distributeTreasury(s, co, 100, now, { manual: true });
+      co.treasury += before - distributable; // restore the salary reserve
+      addNotif(
+        s,
+        `وزعت أرباح ${co.name} 💰`,
+        `نصيبك ${fmtInt(playerShare)} UCN أُودع في رصيدك${reserve > 0 ? ` — واحتُفظ باحتياطي رواتب ${fmtInt(reserve)} UCN` : ""}`,
+        "gold",
+        now
+      );
+      awardXp(s, 20);
+      return s;
+    }
+
+    case "SET_AUTO_DISTRIBUTE": {
+      const co = s.companies.find((c) => c.id === action.companyId);
+      if (!co) return s;
+      const lv = companyLevel(co.level);
+      if (action.enabled && !lv.autoDistribute)
+        return fail(s, "التوزيع التلقائي يُفتح بترقية الشركة إلى «نامية»");
+      co.autoDistribute = action.enabled;
+      if (action.payoutPct !== undefined) {
+        if (!lv.setPayout) return fail(s, "تحديد النسبة بنفسك يُفتح في مستوى «رائدة»");
+        co.payoutPct = Math.min(100, Math.max(10, Math.round(action.payoutPct)));
+      }
+      return s;
+    }
+
+    case "REQUEST_VERIFICATION": {
+      const co = s.companies.find((c) => c.id === action.companyId);
+      if (!co) return s;
+      if (co.verification === "verified") return s;
+      if (co.verification === "pending") return fail(s, "طلبك قيد مراجعة الإدارة العليا بالفعل");
+      co.verification = "pending";
+      co.verificationAt = now;
+      addNotif(s, "طلب التوثيق قُدّم 🏛️", `الإدارة العليا تراجع ملف ${co.name} — القرار خلال دقائق`, "info", now);
+      pushCompanyEvent(co, "verify", "قُدّم طلب التوثيق للإدارة العليا", now);
       return s;
     }
 

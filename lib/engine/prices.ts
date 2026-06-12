@@ -28,7 +28,15 @@ function stepEntry(e: PriceEntry): void {
 }
 
 export function tickPrices(s: GameState, steps = 1): void {
+  const event = s.marketEvent && s.marketEvent.endsAt > Date.now() ? s.marketEvent : null;
   for (let i = 0; i < steps; i++) {
-    for (const key of Object.keys(s.prices)) stepEntry(s.prices[key]);
+    for (const key of Object.keys(s.prices)) {
+      const e = s.prices[key];
+      stepEntry(e);
+      // الإدارة العليا market events add temporary directional drift
+      if (event && event.keys.includes(key)) {
+        e.price = Math.min(e.base * 1.6, Math.max(e.base * 0.4, e.price * (1 + event.mult)));
+      }
+    }
   }
 }

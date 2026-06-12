@@ -141,9 +141,13 @@ export function tickBankruptcy(s: GameState, now: number, steps = 1): void {
           return;
         }
         if (bot.level >= IHSAN_DONOR_MIN_LEVEL && Math.random() < p(0.012, steps)) {
+          // the wealthy give bigger (فزعة على قدر المقام)
+          const wealthMult = 1 + Math.min(1.5, bot.netWorth / 4_000_000);
           const amount = Math.max(
             500,
-            Math.round((s.bankruptcy.debtAtStart ?? remaining) * (0.02 + Math.random() * 0.03))
+            Math.round(
+              (s.bankruptcy.debtAtStart ?? remaining) * (0.02 + Math.random() * 0.03) * wealthMult
+            )
           );
           s.balances.UCN += amount;
           bot.netWorth = Math.max(5000, bot.netWorth - amount);
@@ -221,7 +225,8 @@ export function tickBankruptcy(s: GameState, now: number, steps = 1): void {
       const donor = s.bots[def.id];
       if (!donor || donor.bankrupt || donor.level < IHSAN_DONOR_MIN_LEVEL) continue;
       if (Math.random() < p(0.004, steps)) {
-        const amount = Math.max(500, Math.round(c.debt * (0.03 + Math.random() * 0.05)));
+        const wealthMult = 1 + Math.min(1.5, donor.netWorth / 4_000_000);
+        const amount = Math.max(500, Math.round(c.debt * (0.03 + Math.random() * 0.05) * wealthMult));
         c.donations.unshift({ donorId: def.id, amount, t: now });
         c.donated += amount;
         donor.netWorth = Math.max(5000, donor.netWorth - amount);

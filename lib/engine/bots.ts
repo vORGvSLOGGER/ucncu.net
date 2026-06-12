@@ -70,8 +70,14 @@ function pickEntry(
   const keys = candidateKeys(s);
   const byChange = (fn: (chg: number) => boolean) =>
     keys.filter((k) => fn(s.prices[k].changePct));
+  // الإدارة العليا market events: smart bots trade the announcement
+  const event = s.marketEvent;
   switch (strategy) {
     case "momentum": {
+      // momentum riders pile into an official boom (and short a crash)
+      if (event && Math.random() < 0.6) {
+        return { key: pick(event.keys), side: event.kind === "boom" ? "long" : "short" };
+      }
       const up = byChange((c) => c > 2);
       const down = byChange((c) => c < -2);
       if (up.length && (Math.random() < 0.65 || !down.length))
@@ -80,6 +86,10 @@ function pickEntry(
       return null;
     }
     case "contrarian": {
+      // contrarians fade the crowd: short the boom, buy the crash
+      if (event && Math.random() < 0.5) {
+        return { key: pick(event.keys), side: event.kind === "boom" ? "short" : "long" };
+      }
       const crashed = byChange((c) => c < -3);
       const euphoric = byChange((c) => c > 4);
       if (crashed.length) return { key: pick(crashed), side: "long" };
@@ -124,7 +134,13 @@ export function tickBots(s: GameState, now: number, steps = 1, quiet = false): v
       const pnl = positionPnl(s, p.key, p.side, p.alloc, p.entry);
       const pnlPct = pnl / p.alloc;
       const expired = now - p.openedAt > rules.maxMs;
-      if (pnlPct >= rules.tp || pnlPct <= -rules.sl || expired) {
+      // smart profit-taking: cash out winning event trades before the event ends
+      const eventEnding =
+        s.marketEvent &&
+        s.marketEvent.keys.includes(p.key) &&
+        s.marketEvent.endsAt - now < 60_000 &&
+        pnl > 0;
+      if (pnlPct >= rules.tp || pnlPct <= -rules.sl || expired || eventEnding) {
         b.netWorth = Math.max(BOT_WORTH_FLOOR, b.netWorth + pnl);
         b.positions.splice(i, 1);
         if (!quiet && Math.random() < persona.chattiness) {

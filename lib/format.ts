@@ -123,6 +123,13 @@ export function saudiDayKey(t: number): string {
   return dayKeyFmt.format(new Date(t));
 }
 
+/** stable 7-day bucket keyed to the Saudi calendar — drives the weekly crown */
+export function saudiWeekKey(t: number): string {
+  const [y, m, d] = saudiDayKey(t).split("-").map(Number);
+  const days = Math.floor(Date.UTC(y, m - 1, d) / 86_400_000);
+  return `W${Math.floor(days / 7)}`;
+}
+
 /** "04:59:12" hours countdown (for the 5h bankruptcy grace) */
 export function fmtCountdownLong(msLeft: number): string {
   const s = Math.max(0, Math.floor(msLeft / 1000));

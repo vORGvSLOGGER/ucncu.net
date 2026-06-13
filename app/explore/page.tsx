@@ -11,11 +11,14 @@ import {
   IHSAN_RESCUER_MIN_LEVEL,
   POST_MAX_LEN,
 } from "@/lib/constants";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { cloudConfigured, postFeed } from "@/lib/cloud/client";
+import { useCloudFeed } from "@/lib/cloud/hooks";
 import { authorName } from "@/lib/engine/feed";
 import { fmtCountdownLong, fmtInt, timeAgo } from "@/lib/format";
 import { canDonate, canRescue } from "@/lib/perks";
 import { BOTS, botById } from "@/lib/seed";
-import { useGame, useGameDispatch } from "@/lib/state/GameContext";
+import { useGame, useGameDispatch, useGameMode } from "@/lib/state/GameContext";
 import type { FeedKind, IhsanCase } from "@/lib/types";
 
 const KIND_META: Record<FeedKind, { label: string; cls: string }> = {
@@ -330,8 +333,78 @@ function IhsanTab() {
   );
 }
 
+function GlobalFeedTab() {
+  const auth = useAuth();
+  const { posts, refresh } = useCloudFeed();
+  const [text, setText] = useState("");
+
+  const send = async () => {
+    const body = text.trim().slice(0, POST_MAX_LEN);
+    if (!body || !auth.userId) return;
+    await postFeed({
+      authorId: auth.userId,
+      authorName: (auth.email ?? "لاعب").split("@")[0],
+      kind: "user",
+      text: body,
+      isAdmin: auth.isAdmin,
+    });
+    setText("");
+    refresh();
+  };
+
+  return (
+    <div>
+      <Card className="mb-4 p-3">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          maxLength={POST_MAX_LEN}
+          rows={2}
+          placeholder="شارك اللاعبين الحقيقيين رأيك… 🌐"
+          className="w-full resize-none rounded-xl border border-edge bg-card2 px-3 py-2.5 text-xs text-ink outline-none focus:border-teal/50"
+        />
+        <div className="mt-2 flex items-center justify-between">
+          <span className="text-[9px] text-muted" dir="ltr">{text.length}/{POST_MAX_LEN}</span>
+          <button onClick={send} disabled={!text.trim()} className="btn-teal flex items-center gap-1.5 px-5 py-2 text-xs">
+            <Icon name="send" size={13} />
+            انشر عالميًا
+          </button>
+        </div>
+      </Card>
+      <div className="space-y-2.5">
+        {posts.length === 0 && (
+          <Card className="p-8 text-center text-xs text-muted">
+            لا منشورات عالمية بعد — كن أول من يكتب في طور الحقيقة 🌐
+          </Card>
+        )}
+        {posts.map((p) => (
+          <Card key={p.id} className="card-hover p-3.5">
+            <div className="flex items-start gap-2.5">
+              <Avatar name={p.author_name} avatarId={0} size={36} />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <b className={`text-xs ${p.is_admin ? "text-gold" : "text-ink"}`}>{p.author_name}</b>
+                  {p.is_admin && (
+                    <span className="rounded-full border border-gold/60 bg-gold/15 px-2 py-0.5 text-[8px] font-extrabold text-gold">
+                      رسمي 🏛️
+                    </span>
+                  )}
+                  <span className="ms-auto text-[9px] text-muted">{timeAgo(new Date(p.created_at).getTime())}</span>
+                </div>
+                <p className="mt-1.5 text-[12px] leading-6 text-ink">{p.text}</p>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ExplorePage() {
+  const { mode } = useGameMode();
   const [tab, setTab] = useState("feed");
+  const isReal = mode === "real" && cloudConfigured();
 
   // deep-link: /explore?tab=ihsan (from the bankruptcy banner)
   useEffect(() => {
@@ -339,6 +412,12 @@ export default function ExplorePage() {
       setTab("ihsan");
     }
   }, []);
+
+  const tabs = [
+    { id: "feed", label: "المنشورات 🌍" },
+    ...(isReal ? [{ id: "global", label: "العالمي 🌐" }] : []),
+    { id: "ihsan", label: "إحسان 🤲" },
+  ];
 
   return (
     <div>
@@ -348,16 +427,11 @@ export default function ExplorePage() {
         sub="نبض المجتمع: صفقات التجار، تحليلاتهم، إنجازاتك، وفزعات الإحسان"
       />
       <div data-tour="ihsan-tab">
-        <TabSwitcher
-          tabs={[
-            { id: "feed", label: "المنشورات 🌍" },
-            { id: "ihsan", label: "إحسان 🤲" },
-          ]}
-          active={tab}
-          onChange={setTab}
-        />
+        <TabSwitcher tabs={tabs} active={tab} onChange={setTab} />
       </div>
-      <div className="mt-4">{tab === "feed" ? <FeedTab /> : <IhsanTab />}</div>
+      <div className="mt-4">
+        {tab === "feed" ? <FeedTab /> : tab === "global" ? <GlobalFeedTab /> : <IhsanTab />}
+      </div>
     </div>
   );
 }

@@ -9,6 +9,35 @@ export const storageKeyFor = (m: GameMode) => `ucncu:${m}:v2`;
 
 export const SAUDI_TZ = "Asia/Riyadh";
 
+/* ===================== real mode (online) ===================== */
+
+/**
+ * Fixed global epoch for the deterministic shared market. Every client
+ * computes the SAME price for every asset at the same wall-clock tick by
+ * folding a seeded walk over the ticks elapsed since this instant — so the
+ * "live shared market" needs no server-side price ticker.
+ */
+export const REAL_EPOCH = Date.UTC(2026, 0, 1, 0, 0, 0); // 2026-01-01T00:00Z
+export const REAL_PRICE_SEED = 0x9e3779b9;
+
+/** how often (in ticks) real mode pushes the player's summary to the cloud leaderboard */
+export const LEADERBOARD_SYNC_TICKS = 20; // ~1 min
+/** how often (in ticks) real mode pulls the shared feed / leaderboard for display */
+export const CLOUD_PULL_TICKS = 20;
+
+/** comma-separated admin emails from env → the الإدارة العليا accounts in real mode */
+export function adminEmails(): string[] {
+  return (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function isAdminEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return adminEmails().includes(email.trim().toLowerCase());
+}
+
 /* ---- bankruptcy + إحسان ---- */
 export const GRACE_MS = 5 * 3600_000;
 export const IHSAN_DONOR_MIN_LEVEL = 25;

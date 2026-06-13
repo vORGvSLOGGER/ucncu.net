@@ -64,6 +64,7 @@ import { addNotif, addToast, addTx } from "./log";
 import { ensureThread, pushChat, returnOfferItems, tickSocial } from "./social";
 import { awardXp, checkAchievements } from "./xp";
 import { tickPrices } from "./prices";
+import { syncSharedPrices } from "./sharedPrices";
 
 function fail(s: GameState, msg: string): GameState {
   addToast(s, msg, "warning");
@@ -78,10 +79,12 @@ export function gameReducer(state: GameState, action: Action): GameState {
     case "HYDRATE": {
       const h = structuredClone(action.state);
       retuneBots(h);
+      // real mode: prices are a deterministic function of time (shared market)
+      if (h.mode === "real") syncSharedPrices(h, action.now);
       const elapsed = action.now - h.lastTickAt;
       if (elapsed > TICK_MS) {
         const ticks = Math.min(CATCHUP_MAX_TICKS, Math.floor(elapsed / TICK_MS));
-        tickPrices(h, ticks);
+        if (h.mode !== "real") tickPrices(h, ticks);
         tickBots(h, action.now, ticks, true);
         const summary = processAccruals(h, action.now, true);
         const gained = summary.rent + summary.dividends + summary.lendsReturned;
@@ -110,7 +113,8 @@ export function gameReducer(state: GameState, action: Action): GameState {
       return structuredClone(action.state);
 
     case "TICK": {
-      tickPrices(s);
+      if (s.mode === "real") syncSharedPrices(s, action.now);
+      else tickPrices(s);
       tickBots(s, action.now);
       tickAuctions(s, action.now);
       processAccruals(s, action.now);

@@ -28,10 +28,12 @@ jobs:
           # served from https://<user>.github.io/ucncu.net/ — set to "" once
           # the custom domain ucncu.net is attached in Pages settings
           NEXT_PUBLIC_BASE_PATH: /ucncu.net
-          # Supabase SSO (email OTP) — add these two repository secrets to
-          # activate login; when absent the app runs in guest mode safely
+          # Real mode (online) — add these repository secrets to activate it;
+          # when absent the app runs demo-only / guest mode safely.
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          # optional: comma-separated admin emails → الإدارة العليا accounts
+          NEXT_PUBLIC_ADMIN_EMAILS: ${{ secrets.NEXT_PUBLIC_ADMIN_EMAILS }}
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:

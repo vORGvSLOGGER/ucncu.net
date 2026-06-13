@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Card, SectionTitle } from "@/components/ui/Card";
 import { Avatar } from "@/components/ui/Avatar";
@@ -10,6 +11,8 @@ import { ProgressRing } from "@/components/ui/ProgressRing";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { TabSwitcher } from "@/components/ui/TabSwitcher";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { cloudConfigured } from "@/lib/cloud/client";
+import { useCloudLeaderboard } from "@/lib/cloud/hooks";
 import {
   CRYPTO_CODES,
   CRYPTO_META,
@@ -89,6 +92,37 @@ function FeedbackCard() {
   );
 }
 
+function GlobalLeaderboard() {
+  const { mode } = useGameMode();
+  const rows = useCloudLeaderboard(50);
+  if (mode !== "real" || !cloudConfigured()) return null;
+
+  return (
+    <div className="mt-4">
+      <SectionTitle icon="globe" title="المتصدرون العالميون 🌐" sub="لاعبون حقيقيون في طور الحقيقة" />
+      <Card className="max-h-96 space-y-1.5 overflow-y-auto p-3">
+        {rows.length === 0 && (
+          <div className="p-6 text-center text-xs text-muted">جارٍ تحميل المتصدرين العالميين…</div>
+        )}
+        {rows.map((r, i) => (
+          <div
+            key={r.user_id}
+            className="flex items-center gap-2.5 rounded-xl border border-edge bg-card2 px-2.5 py-2 text-xs"
+          >
+            <span className={`w-5 text-center font-extrabold ${i === 0 ? "text-gold" : i < 3 ? "text-teal" : "text-muted"}`}>
+              {i + 1}
+            </span>
+            <Avatar name={r.name} avatarId={i} size={26} />
+            <span className="min-w-0 flex-1 truncate font-bold text-ink">{r.name}</span>
+            <span className="text-[9px] text-muted">م{r.level}</span>
+            <b className="text-gold">{fmtCompact(r.net_worth)}</b>
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
 function PerksLadder() {
   const game = useGame();
   const [showAll, setShowAll] = useState(false);
@@ -162,7 +196,7 @@ export default function ProfilePage() {
   const game = useGame();
   const dispatch = useGameDispatch();
   const { mode, switchMode } = useGameMode();
-  const { status: authStatus, email, signOut } = useAuth();
+  const { status: authStatus, email, signOut, isAdmin } = useAuth();
   const [nameModal, setNameModal] = useState(false);
   const [resetModal, setResetModal] = useState(false);
   const [nameInput, setNameInput] = useState(game.player.name);
@@ -370,6 +404,8 @@ export default function ProfilePage() {
         </Card>
       </div>
 
+      <GlobalLeaderboard />
+
       <PerksLadder />
 
       <div className="mt-4">
@@ -498,6 +534,17 @@ export default function ProfilePage() {
               <button onClick={() => signOut()} className="btn-ghost px-4 py-1.5 text-xs">
                 تسجيل الخروج
               </button>
+            </div>
+          )}
+          {isAdmin && (
+            <div className="flex items-center justify-between p-3.5">
+              <div>
+                <div className="text-xs font-bold text-gold">لوحة الإدارة العليا 🏛️</div>
+                <p className="mt-0.5 text-[10px] text-muted">صلاحيات إدارية — إعلانات رسمية وتحكم</p>
+              </div>
+              <Link href="/admin" className="btn-gold px-4 py-1.5 text-xs">
+                فتح اللوحة
+              </Link>
             </div>
           )}
           <div className="flex items-center justify-between p-3.5">

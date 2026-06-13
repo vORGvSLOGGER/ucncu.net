@@ -8,23 +8,29 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { isAdminEmail } from "../constants";
+import { isBanned } from "../cloud/client";
 import { getSupabase, isAuthConfigured } from "./supabaseClient";
 
-export type AuthStatus = "disabled" | "loading" | "guest" | "authed";
+export type AuthStatus = "disabled" | "loading" | "guest" | "authed" | "banned";
 
 interface AuthCtxValue {
   status: AuthStatus;
   email: string | null;
+  userId: string | null;
+  isAdmin: boolean;
   sendOtp: (email: string) => Promise<{ error: string | null }>;
   verifyOtp: (email: string, code: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
-  /** seam for the server-authoritative real mode (next milestone) */
+  /** access token for any future server-authoritative calls */
   getAccessToken: () => Promise<string | null>;
 }
 
 const AuthCtx = createContext<AuthCtxValue>({
   status: "disabled",
   email: null,
+  userId: null,
+  isAdmin: false,
   sendOtp: async () => ({ error: "غير مفعّل" }),
   verifyOtp: async () => ({ error: "غير مفعّل" }),
   signOut: async () => {},
@@ -34,6 +40,7 @@ const AuthCtx = createContext<AuthCtxValue>({
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [email, setEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isAuthConfigured()) {
@@ -41,22 +48,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     const supabase = getSupabase()!;
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session?.user?.email) {
-        setEmail(data.session.user.email);
-        setStatus("authed");
-      } else {
-        setStatus("guest");
-      }
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user?.email) {
-        setEmail(session.user.email);
+    // permanent bankruptcy ban: authenticate but block + sign out if banned
+    const apply = async (sessionEmail: string | null, sessionUid: string | null) => {
+      if (sessionEmail) {
+        if (await isBanned(sessionEmail)) {
+          setEmail(sessionEmail);
+          setStatus("banned");
+          await supabase.auth.signOut();
+          return;
+        }
+        setEmail(sessionEmail);
+        setUserId(sessionUid);
         setStatus("authed");
       } else {
         setEmail(null);
+        setUserId(null);
         setStatus("guest");
       }
+    };
+    supabase.auth.getSession().then(({ data }) => {
+      apply(data.session?.user?.email ?? null, data.session?.user?.id ?? null);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      apply(session?.user?.email ?? null, session?.user?.id ?? null);
     });
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -94,7 +108,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthCtx.Provider value={{ status, email, sendOtp, verifyOtp, signOut, getAccessToken }}>
+    <AuthCtx.Provider
+      value={{
+        status,
+        email,
+        userId,
+        isAdmin: status === "authed" && isAdminEmail(email),
+        sendOtp,
+        verifyOtp,
+        signOut,
+        getAccessToken,
+      }}
+    >
       {children}
     </AuthCtx.Provider>
   );

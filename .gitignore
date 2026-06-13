@@ -4,3 +4,8 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store
+
+# local env (real mode secrets — never commit)
+.env
+.env.local
+.env*.local

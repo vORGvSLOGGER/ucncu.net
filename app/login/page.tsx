@@ -1,19 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { Icon } from "@/components/ui/Icon";
 import { PageTitle } from "@/components/ui/PageTitle";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { useGameMode } from "@/lib/state/GameContext";
 
 export default function LoginPage() {
   const { status, email: sessionEmail, sendOtp, verifyOtp, signOut } = useAuth();
+  const { chooseMode } = useGameMode();
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [stage, setStage] = useState<"email" | "code">("email");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // came from ModeSelect "سجّل الدخول للّعب الحقيقي" → enter real mode once authed
+  useEffect(() => {
+    if (status !== "authed") return;
+    if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("next") === "real") {
+      chooseMode("real");
+      router.push("/");
+    }
+  }, [status, chooseMode, router]);
 
   const submitEmail = async () => {
     setBusy(true);

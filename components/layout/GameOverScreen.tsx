@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { banEmail } from "@/lib/cloud/client";
 import { fmtCompact, fmtInt } from "@/lib/format";
 import { seed } from "@/lib/seed";
 import { useGame, useGameDispatch, useGameMode } from "@/lib/state/GameContext";
@@ -9,15 +12,27 @@ import { Icon } from "../ui/Icon";
 export function GameOverScreen() {
   const game = useGame();
   const dispatch = useGameDispatch();
-  const { mode } = useGameMode();
+  const { mode, switchMode } = useGameMode();
+  const auth = useAuth();
+  const banned = useRef(false);
+
+  const isReal = mode === "real";
+
+  // real mode: bankruptcy is permanent — ban the email and sign out, once.
+  useEffect(() => {
+    if (!isReal || banned.current) return;
+    banned.current = true;
+    if (auth.email) banEmail(auth.email);
+    clearState("real");
+    auth.signOut();
+  }, [isReal, auth]);
 
   const daysSurvived = Math.max(1, Math.round((Date.now() - game.player.joinedAt) / 86_400_000));
   const peak = game.netWorthHistory.length ? Math.max(...game.netWorthHistory) : 0;
 
   const restart = () => {
-    const m = mode ?? "demo";
-    clearState(m);
-    dispatch({ type: "RESET", state: seed(m) });
+    clearState("demo");
+    dispatch({ type: "RESET", state: seed("demo") });
   };
 
   return (
@@ -47,14 +62,27 @@ export function GameOverScreen() {
           </div>
         </div>
 
-        <div className="mt-5 rounded-xl border border-gold/30 bg-gold/8 p-3 text-[11px] leading-5 text-gold">
-          هنا في الطور التجريبي تبدأ من جديد… أما في <b>طور الحقيقة</b> فالإفلاس يعني حظر
-          بريدك من اللعبة <b>نهائيًا</b>. اعتبرها بروفة نجاة.
-        </div>
-
-        <button onClick={restart} className="btn-gold mt-6 w-full px-5 py-3 text-sm">
-          ابدأ من جديد 🔄
-        </button>
+        {isReal ? (
+          <>
+            <div className="mt-5 rounded-xl border border-down/40 bg-down/10 p-3 text-[11px] leading-5 text-down">
+              في طور الحقيقة الإفلاس <b>نهائي</b> — حُظر بريدك من الطور الحقيقي للأبد.
+              لكن يمكنك دائمًا متابعة اللعب في الطور التجريبي.
+            </div>
+            <button onClick={switchMode} className="btn-gold mt-6 w-full px-5 py-3 text-sm">
+              الانتقال إلى الطور التجريبي ←
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="mt-5 rounded-xl border border-gold/30 bg-gold/8 p-3 text-[11px] leading-5 text-gold">
+              هنا في الطور التجريبي تبدأ من جديد… أما في <b>طور الحقيقة</b> فالإفلاس يعني حظر
+              بريدك من اللعبة <b>نهائيًا</b>. اعتبرها بروفة نجاة.
+            </div>
+            <button onClick={restart} className="btn-gold mt-6 w-full px-5 py-3 text-sm">
+              ابدأ من جديد 🔄
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

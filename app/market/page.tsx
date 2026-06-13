@@ -12,8 +12,17 @@ import { CATEGORY_LABELS, pk, RARITY_META } from "@/lib/constants";
 import { fmtInt, fmtPct } from "@/lib/format";
 import { MARKET_ITEMS } from "@/lib/seed";
 import { itemPrice, marketItemDef } from "@/lib/selectors";
+import { marketSignal } from "@/lib/strategy";
 import { useGame, useGameDispatch } from "@/lib/state/GameContext";
 import type { MarketCategory } from "@/lib/types";
+
+const SIGNAL_CLASS = {
+  up: "border-up/40 bg-up/10 text-up",
+  down: "border-down/40 bg-down/10 text-down",
+  gold: "border-gold/40 bg-gold/10 text-gold",
+  teal: "border-teal/40 bg-teal/10 text-teal",
+  muted: "border-edge bg-card text-muted",
+} as const;
 
 function TradeItemModal({
   defId,
@@ -121,6 +130,7 @@ export default function MarketPage() {
           const entry = game.prices[pk.mk(def.id)];
           const rarity = RARITY_META[def.rarity];
           const owned = game.inventory.find((i) => i.defId === def.id)?.qty ?? 0;
+          const signal = marketSignal(entry);
           return (
             <Card key={def.id} className="p-3.5">
               <div className="flex items-start justify-between">
@@ -135,6 +145,14 @@ export default function MarketPage() {
                 </span>
               </div>
               <div className="mt-2 text-sm font-bold text-ink">{def.name}</div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className={`rounded-full border px-2 py-0.5 text-[9px] font-extrabold ${SIGNAL_CLASS[signal.tone]}`}>
+                  {signal.label}
+                </span>
+                <span className="text-[9px] text-muted" dir="ltr">
+                  قوة {signal.strength}/100
+                </span>
+              </div>
               <div className="mt-1 flex items-baseline gap-1.5">
                 <span className="text-lg font-extrabold text-ink">{fmtInt(entry.price)}</span>
                 <span className="text-[10px] text-muted">UCN</span>

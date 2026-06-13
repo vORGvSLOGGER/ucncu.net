@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { CommandCenter } from "@/components/game/CommandCenter";
 import { Card, SectionTitle } from "@/components/ui/Card";
 import { CountdownTimer } from "@/components/ui/CountdownTimer";
 import { Icon } from "@/components/ui/Icon";
@@ -243,6 +244,10 @@ export default function HomePage() {
         title="الرئيسية"
         sub={`أهلًا ${game.player.name} — هذه نظرة سريعة على وضعك الاستثماري اليوم`}
       />
+
+      <div className="mb-4">
+        <CommandCenter />
+      </div>
 
       {/* hero stats */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CandleChart } from "@/components/ui/CandleChart";
 import { Card, SectionTitle } from "@/components/ui/Card";
 import { AmountInput } from "@/components/ui/AmountInput";
+import { Icon } from "@/components/ui/Icon";
 import { LevelGate } from "@/components/ui/LevelGate";
 import { LineChart } from "@/components/ui/LineChart";
 import { PageTitle } from "@/components/ui/PageTitle";
@@ -12,6 +13,7 @@ import { pk, TRADE_FEE } from "@/lib/constants";
 import { fmtClock, fmtDec, fmtInt, fmtPct, fmtPrice, fmtSigned } from "@/lib/format";
 import { TRADE_SYMBOLS } from "@/lib/seed";
 import { symbolPrice, tradeSymbolDef, unrealizedPnl } from "@/lib/selectors";
+import { marketSignal } from "@/lib/strategy";
 import { useGame, useGameDispatch } from "@/lib/state/GameContext";
 
 const KIND_LABELS: Record<string, string> = {
@@ -19,6 +21,14 @@ const KIND_LABELS: Record<string, string> = {
   index: "مؤشرات",
   commodity: "سلع",
 };
+
+const SIGNAL_CLASS = {
+  up: "border-up/40 bg-up/10 text-up",
+  down: "border-down/40 bg-down/10 text-down",
+  gold: "border-gold/40 bg-gold/10 text-gold",
+  teal: "border-teal/40 bg-teal/10 text-teal",
+  muted: "border-edge bg-card text-muted",
+} as const;
 
 export default function TradingPage() {
   const game = useGame();
@@ -34,6 +44,14 @@ export default function TradingPage() {
   const cost = entry.price * qty * (1 + TRADE_FEE);
   const maxQty = Math.floor((game.balances.UCN / (entry.price * (1 + TRADE_FEE))) * 100) / 100;
   const canOpen = qty > 0 && cost <= game.balances.UCN;
+  const signal = marketSignal(entry);
+  const orderRiskPct = game.balances.UCN > 0 ? (cost / game.balances.UCN) * 100 : 0;
+  const orderRisk =
+    orderRiskPct >= 45
+      ? { label: "مخاطرة عالية", tone: "down" as const }
+      : orderRiskPct >= 22
+        ? { label: "مخاطرة متوسطة", tone: "gold" as const }
+        : { label: "مخاطرة منخفضة", tone: "teal" as const };
 
   const realized = game.closedTrades.reduce((s, t) => s + t.pnl, 0);
 
@@ -90,6 +108,11 @@ export default function TradingPage() {
                   {fmtPct(entry.changePct)}
                 </span>
               </div>
+              <div className={`mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-extrabold ${SIGNAL_CLASS[signal.tone]}`}>
+                <Icon name={signal.tone === "down" ? "shield" : signal.tone === "gold" ? "fire" : "bolt"} size={11} />
+                {signal.label}
+                <span dir="ltr">{signal.strength}/100</span>
+              </div>
               <div className="text-2xl font-extrabold text-gold-grad" dir="ltr">
                 {fmtPrice(entry.price)} <span className="text-xs">UCN</span>
               </div>
@@ -142,6 +165,21 @@ export default function TradingPage() {
               <span className="text-muted">الهامش المطلوب</span>
               <b className="text-gold">{fmtInt(cost)} UCN</b>
             </div>
+          </div>
+          <div className={`mt-3 rounded-xl border p-3 text-[11px] ${SIGNAL_CLASS[orderRisk.tone]}`}>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="font-extrabold">{orderRisk.label}</span>
+              <b dir="ltr">{fmtPct(orderRiskPct, false)}</b>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-bg/60">
+              <div
+                className={`h-full rounded-full ${orderRisk.tone === "down" ? "bg-down" : orderRisk.tone === "gold" ? "bg-gold" : "bg-teal"}`}
+                style={{ width: `${Math.min(100, Math.max(3, orderRiskPct))}%` }}
+              />
+            </div>
+            <p className="mt-2 leading-5 text-muted">
+              الأفضل إبقاء الصفقة الأولى تحت 10% من السيولة، ورفع الحجم فقط بعد وضوح الاتجاه.
+            </p>
           </div>
           <button
             disabled={!canOpen}

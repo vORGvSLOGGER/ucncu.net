@@ -77,7 +77,9 @@ export function genContractOffer(c: Company, now: number, mega = false): Company
   const title = titles[Math.floor(Math.random() * titles.length)].replace("{s}", sectorName(sector));
   const costBase = mega ? 0.2 + Math.random() * 0.15 : 0.05 + Math.random() * 0.1;
   const cost = Math.max(2000, Math.round(c.valuation * costBase));
-  const rewardMult = mega ? 1.5 + Math.random() * 0.7 : 1.15 + Math.random() * 0.65;
+  // reward multipliers tuned so contracts stay positive-EV but aren't a
+  // money fountain (paired with a harsher fail refund + risk floor below)
+  const rewardMult = mega ? 1.35 + Math.random() * 0.45 : 1.1 + Math.random() * 0.35;
   return {
     id: uid("ctr"),
     title,
@@ -116,7 +118,7 @@ export function tickCompanies(s: GameState, now: number, quiet = false): void {
     for (const k of c.contracts) {
       if (k.status !== "active" || (k.endsAt ?? 0) > now) continue;
       const employees = companyEmployees(c).length;
-      const effRisk = Math.max(0.02, k.risk - 0.05 * employees);
+      const effRisk = Math.max(0.04, k.risk - 0.03 * employees);
       const eventBoost =
         s.marketEvent &&
         s.marketEvent.kind === "boom" &&
@@ -138,7 +140,7 @@ export function tickCompanies(s: GameState, now: number, quiet = false): void {
         }
       } else {
         k.status = "failed";
-        const refund = Math.round(k.cost * 0.5);
+        const refund = Math.round(k.cost * 0.4);
         c.treasury += refund;
         c.fame = Math.max(0, c.fame - 5);
         pushCompanyEvent(c, "contract", `تعثر «${k.title}» — استُرد ${fmtInt(refund)} UCN فقط`, now);

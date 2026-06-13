@@ -73,7 +73,7 @@ export function processAccruals(
       const employees = c.members.filter((m) => m.rank === "employee");
       const verifiedBoost = c.verification === "verified" ? VERIFIED_PROFIT_BOOST : 1;
       const gross = Math.round(
-        c.valuation * DIVIDEND_YIELD * lv.profitBoost * (1 + 0.08 * employees.length) * verifiedBoost
+        c.valuation * DIVIDEND_YIELD * lv.profitBoost * (1 + 0.05 * employees.length) * verifiedBoost
       );
       c.treasury += gross;
       grossTotal += gross;

@@ -52,7 +52,10 @@ export const CATCHUP_MAX_TICKS = 20;
 
 export const FX_SPREAD = 0.005;
 export const TRADE_FEE = 0.001;
-export const DIVIDEND_YIELD = 0.004;
+/** company gross profit per dividend cycle, as a fraction of valuation.
+ *  tuned for balance: high enough to make companies the endgame, low enough
+ *  that passive income doesn't snowball faster than the player can spend. */
+export const DIVIDEND_YIELD = 0.003;
 
 export const FEATURE_LEVELS: Record<string, { level: number; label: string }> = {
   market: { level: 1, label: "السوق" },
